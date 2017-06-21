@@ -8,6 +8,36 @@
 #include <iostream>
 #include <fstream>
 
+/*
+//Helpers
+*/
+
+/*
+* accurate time, results in nanosseconds
+*/
+
+//new c++11 std
+//#include <chrono>
+//using namespace std::chrono;
+// long long get_timestamp{
+//   high_resolution_clock::time_point t1 = high_resolution_clock::now();
+//   high_resolution_clock::duration dt1 = t1.time_since_epoch();
+//   return dt1.count();
+// }
+
+#include <ctime>
+long get_timestamp()
+{ 
+    struct timeval tv;
+    gettimeofday(&tv,NULL);
+    //tv.tv_sec // seconds
+    //tv.tv_usec // microseconds
+    long timestamp = tv.tv_sec*1000000L +tv.tv_usec;
+    //std::cout << " c standard: " <<large <<std::endl;
+    return timestamp;
+}
+
+
 /* ================================================================== */
 // Global variables 
 /* ================================================================== */
@@ -22,7 +52,7 @@ std::ostream * out = &cerr;
 // Command line switches
 /* ===================================================================== */
 KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE,  "pintool",
-    "o", "", "specify file name for MyPinTool output");
+    "o", "", "specify file prefix for Opmixtrace output");
 
 KNOB<BOOL>   KnobCount(KNOB_MODE_WRITEONCE,  "pintool",
     "count", "1", "count instructions, basic blocks and threads in the application");

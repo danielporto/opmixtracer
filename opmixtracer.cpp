@@ -41,6 +41,30 @@ long get_timestamp()
 /* ================================================================== */
 // Global variables 
 /* ================================================================== */
+const UINT32 MAX_INSTRUCTIONS=16777215; //3 byte lenght opcodes
+const UINT32 MAX_LOCKS_INSTRUCTIONS=MAX_INSTRUCTIONS/2; //3 byte lenght opcodes
+
+UINT64 insBucket[MAX_INSTRUCTIONS];
+PIN_LOCK insBucketLocks[MAX_LOCKS_INSTRUCTIONS];
+
+
+// /* zero initialized */
+// class STATS
+// {
+//   public:
+//     COUNTER insBucket[MAX_INSTRUCTIONS];
+
+//     VOID Clear(FLT64 factor)
+//     {
+//         for ( UINT32 i = 0; i < MAX_INSTRUCTIONS; i++)
+//         {
+//             insBucket[i] = COUNTER(insBucket[i] * factor);
+//         }
+//     }
+// };
+
+// STATS GlobalStats;
+
 
 UINT64 insCount = 0;        //number of dynamically executed instructions
 UINT64 bblCount = 0;        //number of dynamically executed basic blocks
@@ -52,11 +76,19 @@ std::ostream * out = &cerr;
 // Command line switches
 /* ===================================================================== */
 KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE,  "pintool",
-    "o", "", "specify file prefix for Opmixtrace output");
+    "o", "opmixtrace.out", "specify file prefix for Opmixtrace output");
 
 KNOB<BOOL>   KnobCount(KNOB_MODE_WRITEONCE,  "pintool",
     "count", "1", "count instructions, basic blocks and threads in the application");
 
+//the operation checkpoint determine the number of operations required to check
+//wheter it is time to checkpoint.
+KNOB<INT32>   KnobOperationThreshold(KNOB_MODE_WRITEONCE,  "pintool",
+    "operations", "1", "checkpoint for checking the time interval to count instructions, basic blocks and threads in the application");
+
+//the time for checkpoiting is defined ms
+KNOB<INT32>   KnobTimeThreshold(KNOB_MODE_WRITEONCE,  "pintool",
+    "time", "1000", "time interval to write down the trace into the output file");
 
 /* ===================================================================== */
 // Utilities
@@ -90,6 +122,7 @@ VOID CountBbl(UINT32 numInstInBbl)
     bblCount++;
     insCount += numInstInBbl;
 }
+
 
 /* ===================================================================== */
 // Instrumentation callbacks
@@ -138,7 +171,7 @@ VOID ThreadStart(THREADID threadIndex, CONTEXT *ctxt, INT32 flags, VOID *v)
 VOID Fini(INT32 code, VOID *v)
 {
     *out <<  "===============================================" << endl;
-    *out <<  "MyPinTool analysis results: " << endl;
+    *out <<  "OpMixTracer analysis results: " << endl;
     *out <<  "Number of instructions: " << insCount  << endl;
     *out <<  "Number of basic blocks: " << bblCount  << endl;
     *out <<  "Number of threads: " << threadCount  << endl;
@@ -178,7 +211,7 @@ int main(int argc, char *argv[])
     }
     
     cerr <<  "===============================================" << endl;
-    cerr <<  "This application is instrumented by MyPinTool" << endl;
+    cerr <<  "This application is instrumented by OpMixTracer" << endl;
     if (!KnobOutputFile.Value().empty()) 
     {
         cerr << "See file " << KnobOutputFile.Value() << " for analysis results" << endl;

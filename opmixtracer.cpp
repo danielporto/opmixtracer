@@ -7,6 +7,7 @@
 #include "pin.H"
 #include <iostream>
 #include <fstream>
+#include <sstream>
 
 /*
 //Helpers
@@ -62,11 +63,11 @@ KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE,  "pintool",
 //the operation checkpoint determine the number of operations required to check
 //wheter it is time to checkpoint.
 KNOB<INT32>   KnobOperationThreshold(KNOB_MODE_WRITEONCE,  "pintool",
-    "operations", "1000", "checkpoint for checking the time interval to count instructions, basic blocks and threads in the application");
+    "operations", "1000000", "checkpoint for checking the time interval to count instructions, basic blocks and threads in the application");
 
 //the time for checkpoiting is defined ms
 KNOB<INT32>   KnobTimeThreshold(KNOB_MODE_WRITEONCE,  "pintool",
-    "time", "1000", "time interval to write down the trace into the output file");
+    "time", "1000000", "time interval to write down the trace into the output file");
 
 /* ===================================================================== */
 // Utilities
@@ -99,12 +100,18 @@ INT32 Usage()
 
 VOID PrintCSVHeader(ofstream& out)
 {
-    out <<"! ";
+    out <<"!Timestamp;";
     for ( UINT32 i = 0; i < MAX_INSTRUCTIONS; i++)
     {
         out <<OPCODE_StringShort(i) << ";";
     }   
     out << endl;
+    out.flush();
+}
+
+VOID Print(ofstream& out, const string& text)
+{
+    out <<"! " << text << endl;
     out.flush();
 }
 
@@ -131,14 +138,17 @@ VOID docount(UINT64 * counter)
     (*counter)++;
     PIN_ReleaseLock(&lockStats);
     totalInstuctions++;
-    if (totalInstuctions % insInterval ==0)
+    if (totalInstuctions % insInterval == 0 )
     {
+        // static stringstream ss;
+        // ss << "timestamp " << lastTimeInterval << ";" <<endl;
+        // Print(*out,ss.str());
         UINT64 now = get_timestamp();
-      if ( lastTimeInterval+timeInterval >= now)  
-      {
-          lastTimeInterval=now;
-          PrintStatsToCSV(*out, now);
-      }
+        if ( now - lastTimeInterval >= timeInterval)  
+        {
+            lastTimeInterval=now;
+            PrintStatsToCSV(*out, now);
+        }
 
     }
 }
@@ -195,6 +205,7 @@ int main(int argc, char *argv[])
     string fileName = KnobOutputFile.Value();
     insInterval = KnobOperationThreshold.Value();
     timeInterval = KnobTimeThreshold.Value();
+    lastTimeInterval = get_timestamp();
 
     if (!fileName.empty()) { out = new std::ofstream(fileName.c_str());}
 

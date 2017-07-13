@@ -41,50 +41,28 @@ long get_timestamp()
 /* ================================================================== */
 // Global variables 
 /* ================================================================== */
-const UINT32 MAX_INSTRUCTIONS=16777215; //3 byte lenght opcodes
-const UINT32 MAX_LOCKS_INSTRUCTIONS=MAX_INSTRUCTIONS/2; //3 byte lenght opcodes
+const UINT32 MAX_INSTRUCTIONS=1530; //3 byte lenght opcodes
+UINT64 STATS[MAX_INSTRUCTIONS];
+PIN_LOCK lockStats;
+PIN_LOCK lockTimeInterval;
+PIN_LOCK lockTotalInstuctions;
 
-UINT64 insBucket[MAX_INSTRUCTIONS];
-PIN_LOCK insBucketLocks[MAX_LOCKS_INSTRUCTIONS];
+UINT64 insInterval = 0;
+UINT64 totalInstuctions=0;
+UINT64 timeInterval = 0;
+UINT64 lastTimeInterval = 0;
 
-
-// /* zero initialized */
-// class STATS
-// {
-//   public:
-//     COUNTER insBucket[MAX_INSTRUCTIONS];
-
-//     VOID Clear(FLT64 factor)
-//     {
-//         for ( UINT32 i = 0; i < MAX_INSTRUCTIONS; i++)
-//         {
-//             insBucket[i] = COUNTER(insBucket[i] * factor);
-//         }
-//     }
-// };
-
-// STATS GlobalStats;
-
-
-UINT64 insCount = 0;        //number of dynamically executed instructions
-UINT64 bblCount = 0;        //number of dynamically executed basic blocks
-UINT64 threadCount = 0;     //total number of threads, including main thread
-
-std::ostream * out = &cerr;
-
+std::ofstream *out = 0;
 /* ===================================================================== */
 // Command line switches
 /* ===================================================================== */
 KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE,  "pintool",
     "o", "opmixtrace.out", "specify file prefix for Opmixtrace output");
 
-KNOB<BOOL>   KnobCount(KNOB_MODE_WRITEONCE,  "pintool",
-    "count", "1", "count instructions, basic blocks and threads in the application");
-
 //the operation checkpoint determine the number of operations required to check
 //wheter it is time to checkpoint.
 KNOB<INT32>   KnobOperationThreshold(KNOB_MODE_WRITEONCE,  "pintool",
-    "operations", "1", "checkpoint for checking the time interval to count instructions, basic blocks and threads in the application");
+    "operations", "1000", "checkpoint for checking the time interval to count instructions, basic blocks and threads in the application");
 
 //the time for checkpoiting is defined ms
 KNOB<INT32>   KnobTimeThreshold(KNOB_MODE_WRITEONCE,  "pintool",
@@ -112,70 +90,85 @@ INT32 Usage()
 /* ===================================================================== */
 
 /*!
- * Increase counter of the executed basic blocks and instructions.
- * This function is called for every basic block when it is about to be executed.
- * @param[in]   numInstInBbl    number of instructions in the basic block
- * @note use atomic operations for multi-threaded applications
- */
-VOID CountBbl(UINT32 numInstInBbl)
-{
-    bblCount++;
-    insCount += numInstInBbl;
-}
-
-
-/* ===================================================================== */
-// Instrumentation callbacks
-/* ===================================================================== */
-
-/*!
- * Insert call to the CountBbl() analysis routine before every basic block 
- * of the trace.
- * This function is called every time a new trace is encountered.
- * @param[in]   trace    trace to be instrumented
- * @param[in]   v        value specified by the tool in the TRACE_AddInstrumentFunction
- *                       function call
- */
-VOID Trace(TRACE trace, VOID *v)
-{
-    // Visit every basic block in the trace
-    for (BBL bbl = TRACE_BblHead(trace); BBL_Valid(bbl); bbl = BBL_Next(bbl))
-    {
-        // Insert a call to CountBbl() before every basic bloc, passing the number of instructions
-        BBL_InsertCall(bbl, IPOINT_BEFORE, (AFUNPTR)CountBbl, IARG_UINT32, BBL_NumIns(bbl), IARG_END);
-    }
-}
-
-/*!
- * Increase counter of threads in the application.
- * This function is called for every thread created by the application when it is
- * about to start running (including the root thread).
- * @param[in]   threadIndex     ID assigned by PIN to the new thread
- * @param[in]   ctxt            initial register state for the new thread
- * @param[in]   flags           thread creation flags (OS specific)
- * @param[in]   v               value specified by the tool in the 
- *                              PIN_AddThreadStartFunction function call
- */
-VOID ThreadStart(THREADID threadIndex, CONTEXT *ctxt, INT32 flags, VOID *v)
-{
-    threadCount++;
-}
-
-/*!
  * Print out analysis results.
  * This function is called when the application exits.
  * @param[in]   code            exit code of the application
  * @param[in]   v               value specified by the tool in the 
  *                              PIN_AddFiniFunction function call
  */
+
+VOID PrintCSVHeader(ofstream& out)
+{
+    out <<"! ";
+    for ( UINT32 i = 0; i < MAX_INSTRUCTIONS; i++)
+    {
+        out <<OPCODE_StringShort(i) << ";";
+    }   
+    out << endl;
+    out.flush();
+}
+
+VOID PrintStatsToCSV(ofstream& out, UINT64 timestamp)
+{
+    out << timestamp <<";";
+    for ( UINT32 i = 0; i < MAX_INSTRUCTIONS; i++)
+    {
+        out <<STATS[i] << ";";
+    }   
+    out << endl;
+    out.flush();
+}
+
+/*!
+ * Increase counter of the executed basic blocks and instructions.
+ * This function is called for every basic block when it is about to be executed.
+ * @param[in]   numInstInBbl    number of instructions in the basic block
+ * @note use atomic operations for multi-threaded applications
+ */
+VOID docount(UINT64 * counter)
+{
+    PIN_GetLock(&lockStats,0);
+    (*counter)++;
+    PIN_ReleaseLock(&lockStats);
+    totalInstuctions++;
+    if (totalInstuctions % insInterval ==0)
+    {
+        UINT64 now = get_timestamp();
+      if ( lastTimeInterval+timeInterval >= now)  
+      {
+          lastTimeInterval=now;
+          PrintStatsToCSV(*out, now);
+      }
+
+    }
+}
+/* ===================================================================== */
+// Instrumentation callbacks
+/* ===================================================================== */
+
+/*!
+ * Insert call to the docount() analysis routine before every instruction 
+ * of the trace.
+ * @param[in]   ins    instruction found
+ * @param[in]   v      value specified by the tool in the Instruction function call
+ */
+VOID Instruction(INS ins, VOID *v)
+{
+    //this is not optimal but will do the job
+    INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)docount, IARG_PTR, &(STATS[INS_Opcode(ins)]), IARG_END);
+}
+
+
+
+
 VOID Fini(INT32 code, VOID *v)
 {
-    *out <<  "===============================================" << endl;
-    *out <<  "OpMixTracer analysis results: " << endl;
-    *out <<  "Number of instructions: " << insCount  << endl;
-    *out <<  "Number of basic blocks: " << bblCount  << endl;
-    *out <<  "Number of threads: " << threadCount  << endl;
-    *out <<  "===============================================" << endl;
+    UINT64 now = get_timestamp();
+    PrintStatsToCSV(*out,now);
+    *out <<  "!===============================================" << endl;
+    *out <<  "!OpMixTracer total instructions: " << totalInstuctions << endl;
+    *out <<  "!===============================================" << endl;
+    out->close();
 }
 
 /*!
@@ -187,6 +180,11 @@ VOID Fini(INT32 code, VOID *v)
  */
 int main(int argc, char *argv[])
 {
+    //Initialize all locks
+    PIN_InitLock(&lockStats);
+    PIN_InitLock(&lockTimeInterval);
+    PIN_InitLock(&lockTotalInstuctions);
+
     // Initialize PIN library. Print help message if -h(elp) is specified
     // in the command line or the command line is invalid 
     if( PIN_Init(argc,argv) )
@@ -195,21 +193,16 @@ int main(int argc, char *argv[])
     }
     
     string fileName = KnobOutputFile.Value();
+    insInterval = KnobOperationThreshold.Value();
+    timeInterval = KnobTimeThreshold.Value();
 
     if (!fileName.empty()) { out = new std::ofstream(fileName.c_str());}
 
-    if (KnobCount)
-    {
-        // Register function to be called to instrument traces
-        TRACE_AddInstrumentFunction(Trace, 0);
+    // Register function to be called to instrument traces
+    INS_AddInstrumentFunction(Instruction, 0);
+    // Register function to be called when the application exits
+    PIN_AddFiniFunction(Fini, 0);
 
-        // Register function to be called for every thread before it starts running
-        PIN_AddThreadStartFunction(ThreadStart, 0);
-
-        // Register function to be called when the application exits
-        PIN_AddFiniFunction(Fini, 0);
-    }
-    
     cerr <<  "===============================================" << endl;
     cerr <<  "This application is instrumented by OpMixTracer" << endl;
     if (!KnobOutputFile.Value().empty()) 
@@ -219,6 +212,7 @@ int main(int argc, char *argv[])
     cerr <<  "===============================================" << endl;
 
     // Start the program, never returns
+    PrintCSVHeader(*out);
     PIN_StartProgram();
     
     return 0;

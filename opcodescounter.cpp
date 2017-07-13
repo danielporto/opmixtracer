@@ -17,9 +17,12 @@
 /* ================================================================== */
 // Global variables 
 /* ================================================================== */
-const UINT32 MAX_INSTRUCTIONS=16777215; //3 byte lenght opcodes
+const UINT32 MAX_INSTRUCTIONS=1530; //3 byte lenght opcodes
 UINT64 STATS[MAX_INSTRUCTIONS];
+PIN_LOCK lock;
 std::ofstream *out = 0;
+
+
 /* ===================================================================== */
 // Command line switches
 /* ===================================================================== */
@@ -42,11 +45,13 @@ INT32 Usage()
 }
 
 /* ===================================================================== */
-// Analysis routines
+// Analysis routines are not thread safe
 /* ===================================================================== */
 VOID docount(UINT64 * counter)
 {
+    PIN_GetLock(&lock,0);
     (*counter)++;
+    PIN_ReleaseLock(&lock);
 }
 
 /* ===================================================================== */
@@ -106,9 +111,15 @@ VOID Fini(INT32 code, VOID *v)
  */
 int main(int argc, char *argv[])
 {
+
+    //init lock
+    PIN_InitLock(&lock);
+
+
     // Initialize PIN library. Print help message if -h(elp) is specified
     // in the command line or the command line is invalid 
     if( PIN_Init(argc,argv) )  {  return Usage();   }
+  
     
     string fileName = KnobOutputFile.Value();
 

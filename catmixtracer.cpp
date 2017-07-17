@@ -42,8 +42,8 @@ static long get_timestamp()
 /* ================================================================== */
 // Global variables 
 /* ================================================================== */
-const UINT32 MAX_INSTRUCTIONS=1530; //3 byte lenght opcodes
-UINT64 STATS[MAX_INSTRUCTIONS];
+const UINT32 MAX_CATEGORIES=80; //3 byte lenght opcodes
+UINT64 STATS[MAX_CATEGORIES];
 PIN_LOCK lockStats;
 PIN_LOCK lockTimeInterval;
 PIN_LOCK lockTotalInstuctions;
@@ -58,7 +58,7 @@ std::ofstream *out = 0;
 // Command line switches
 /* ===================================================================== */
 KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE,  "pintool",
-    "o", "opmixtrace.out", "specify file prefix for Opmixtrace output");
+    "o", "catmixtrace.out", "specify file prefix for Catmixtrace output");
 
 //the operation checkpoint determine the number of operations required to check
 //wheter it is time to checkpoint.
@@ -101,12 +101,11 @@ INT32 Usage()
 VOID PrintCSVHeader(ofstream& out)
 {
     out <<"!Timestamp;";
-    for ( UINT32 i = 0; i < MAX_INSTRUCTIONS; i++)
+    for ( UINT32 i = 0; i < MAX_CATEGORIES; i++)
     {
-        out <<OPCODE_StringShort(i) << ";";
+        out <<CATEGORY_StringShort(i) << ";";
     }   
     out << endl;
-
     out.flush();
 }
 
@@ -119,7 +118,7 @@ VOID Print(ofstream& out, const string& text)
 VOID PrintStatsToCSV(ofstream& out, UINT64 timestamp)
 {
     out << timestamp <<";";
-    for ( UINT32 i = 0; i < MAX_INSTRUCTIONS; i++)
+    for ( UINT32 i = 0; i < MAX_CATEGORIES; i++)
     {
         out <<STATS[i] << ";";
     }   
@@ -166,7 +165,7 @@ VOID docount(UINT64 * counter)
 VOID Instruction(INS ins, VOID *v)
 {
     //this is not optimal but will do the job
-    INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)docount, IARG_PTR, &(STATS[INS_Opcode(ins)]), IARG_END);
+    INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)docount, IARG_PTR, &(STATS[INS_Category(ins)]), IARG_END);
 }
 
 
@@ -177,7 +176,7 @@ VOID Fini(INT32 code, VOID *v)
     UINT64 now = get_timestamp();
     PrintStatsToCSV(*out,now);
     *out <<  "!===============================================" << endl;
-    *out <<  "!OpMixTracer total instructions: " << totalInstuctions << endl;
+    *out <<  "!CatMixTracer total instructions: " << totalInstuctions << endl;
     *out <<  "!===============================================" << endl;
     out->close();
 }
@@ -216,7 +215,7 @@ int main(int argc, char *argv[])
     PIN_AddFiniFunction(Fini, 0);
 
     cerr <<  "===============================================" << endl;
-    cerr <<  "This application is instrumented by OpMixTracer" << endl;
+    cerr <<  "This application is instrumented by CatMixTracer" << endl;
     if (!KnobOutputFile.Value().empty()) 
     {
         cerr << "See file " << KnobOutputFile.Value() << " for analysis results" << endl;

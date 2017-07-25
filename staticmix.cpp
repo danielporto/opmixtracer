@@ -14,13 +14,14 @@
 KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE,  "pintool",
     "o", "static-", "specify file prefix for static analysis output");
 KNOB<BOOL>   KnobCategory(KNOB_MODE_WRITEONCE,                "pintool",
-    "c", "0", "static analize instruction category");
+    "category", "0", "static analize instruction category");
 KNOB<BOOL>   KnobInstructions(KNOB_MODE_WRITEONCE,                "pintool",
-    "i", "1", "static analize instructions");
+    "instruction", "0", "static analize instructions");
 KNOB<BOOL>   KnobExtensions(KNOB_MODE_WRITEONCE,                "pintool",
-    "e", "0", "static analize instruction extension");
-KNOB<BOOL>   KnobNoSharedLibs(KNOB_MODE_WRITEONCE,  "pintool",
-    "no_shared_libs", "0", "include all libraries and dependencies");
+    "extension", "0", "static analize instruction extension");
+//Doesnt work for static analysis
+// KNOB<BOOL>   KnobNoSharedLibs(KNOB_MODE_WRITEONCE,  "pintool",
+//     "no_shared_libs", "0", "include all libraries and dependencies");
 KNOB<BOOL>   KnobSplitPredicatedInstructions(KNOB_MODE_WRITEONCE,  "pintool",
     "split_type", "0", "print predicated and unpredicated instruction separatedly");
 KNOB<BOOL>   KnobPredicatedInstructions(KNOB_MODE_WRITEONCE,  "pintool",
@@ -31,7 +32,7 @@ KNOB<BOOL>   KnobPredicatedInstructions(KNOB_MODE_WRITEONCE,  "pintool",
 // Global variables 
 /* ================================================================== */
 const UINT32 MAX_CATEGORIES=80; 
-const UINT32 MAX_EXTENSIONS=80; 
+const UINT32 MAX_EXTENSIONS=60; 
 const UINT32 MAX_INSTRUCTIONS=1530; //3 byte lenght opcodes, many unused.
 UINT64 StaticData[MAX_INSTRUCTIONS];
 UINT64 totalInstuctions=0;
@@ -156,6 +157,7 @@ VOID Image(IMG img, VOID * v)
                 else{
                     StaticData[INS_Opcode(ins)]++;
                 }
+                totalInstuctions++;
             }
             RTN_Close(rtn);
         }
@@ -183,9 +185,14 @@ int main(int argc, char *argv[])
     {
         return Usage();
     }
-    if((KnobInstructions.Value() ^ KnobInstructions.Value()) ^ KnobExtensions.Value() ){
-        cerr << "Choose one Instructuction, Category or Extension static analysis." << endl;
-        return Usage();
+
+    //choose only one option
+    bool xorOpts=(KnobInstructions.Value() ^ KnobCategory.Value() ^ KnobExtensions.Value());
+    bool andOpts=(KnobInstructions.Value() & KnobCategory.Value() & KnobExtensions.Value());
+    if( !xorOpts || andOpts  ){
+        cerr << "Choose one Instruction, Category or Extension static analysis., or -h for help" << endl;
+        cerr << KnobInstructions.Value() << " ;" << KnobCategory.Value() << " ;" << KnobExtensions.Value() << ";" << endl;
+        return -1;
     }
     
     //prepare output file
@@ -202,7 +209,8 @@ int main(int argc, char *argv[])
     {
         report = report + "instruction-"; 
     }
-    report = KnobNoSharedLibs.Value()? report+ "no_libs":report+ "with_libs";
+    //doesnt work for static analysis
+    //report = KnobNoSharedLibs.Value()? report+ "no_libs":report+ "with_libs";
     report = KnobSplitPredicatedInstructions.Value()?report+(KnobPredicatedInstructions.Value()?"-predicated":"-unpredicated"):report;
     report = report + ".out";
     out = new std::ofstream(report.c_str());

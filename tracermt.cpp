@@ -1,10 +1,9 @@
 #include <iostream>
 #include <fstream>
-#include <unordered_map>
 #include "pin.H"
 
 KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE, "pintool",
-    "o", "", "specify output file name");
+    "o", "tracemt.out", "specify output file name");
 
 INT32 numThreads = 0;
 ostream* OutFile = NULL;
@@ -27,15 +26,13 @@ class thread_data_t
 static  TLS_KEY tls_key = INVALID_TLS_KEY;
 
 // A map to store the data attached for each thread, and a lock to protect the map
-std::map<THREADID, thread_data_t*> threads_data;
-PIN_LOCK lock;
+thread_data_t* threads_data[100];
 
 // function to access thread-specific data
 thread_data_t* get_tls(THREADID threadid)
 {
+    return threads_data[threadid];
     
-    std::map<THREADID, thread_data_t*>::const_iterator it = threads_data.find(threadid);
-    return  it->second;
 }
 
 // This function is called before every block
@@ -97,10 +94,7 @@ VOID ThreadStart(THREADID threadid, CONTEXT *ctxt, INT32 flags, VOID *v)
         cerr << "PIN_SetThreadData failed" << endl;
         PIN_ExitProcess(1);
     }
-    PIN_GetLock(&lock, threadid+1);
-    threads_data.insert(std::make_pair(threadid, tdata));
-    PIN_ReleaseLock(&lock);
-
+    threads_data[threadid]=tdata;
     TestIllegalTLSOPerations(threadid);
 }
 
@@ -155,9 +149,6 @@ int main(int argc, char * argv[])
         return Usage();
 
     OutFile = KnobOutputFile.Value().empty() ? &cout : new std::ofstream(KnobOutputFile.Value().c_str());
-
-    // Initialize the pin lock
-    PIN_InitLock(&lock);
 
     // Obtain  a key for TLS storage.
     tls_key = PIN_CreateThreadDataKey(NULL);

@@ -215,40 +215,28 @@ class BBLSTATS
 };
 
 
-
+// key for accessing TLS storage in the threads. initialized once in main()
+static  TLS_KEY tls_key = INVALID_TLS_KEY;
+INT32 numThreads = 0;
+static std::ofstream* out = 0;
 LOCALVAR vector<const BBLSTATS*> statsList;
 
-
-
-/* ===================================================================== */
-
-// LOCALVAR UINT32 enabled = 0;
-
-// LOCALFUN VOID Handler(EVENT_TYPE ev, VOID *val, CONTEXT * ctxt, VOID *ip, THREADID tid, bool bcast)
-// {
-//     switch(ev)
-//     {
-//       case EVENT_START:
-//         enabled = 1;
-//         break;
-
-//       case EVENT_STOP:
-//         enabled = 0;
-//         break;
-
-//       default:
-//         ASSERTX(false);
-//     }
-// }
-
-
-// LOCALVAR CONTROL_MANAGER control;
 
 /* ===================================================================== */
 
 VOID PIN_FAST_ANALYSIS_CALL docount(COUNTER * counter)
 {
     (*counter) += 1;
+}
+/*=======================================================================*/
+VOID ThreadStart(THREADID threadid, CONTEXT *ctxt, INT32 flags, VOID *v)
+{
+    numThreads++;
+}
+// This function is called when the thread exits
+VOID ThreadFini(THREADID threadIndex, const CONTEXT *ctxt, INT32 code, VOID *v)
+{
+    *out << "Count[" << decstr(threadIndex) << "] = finished" << endl;
 }
 
 /* ===================================================================== */
@@ -342,7 +330,6 @@ VOID DumpStats(ofstream& out, STATS& stats, BOOL predicated_true,  const string&
 
 
 /* ===================================================================== */
-static std::ofstream* out = 0;
 
 VOID Fini(int, VOID * v)
 {
@@ -402,6 +389,18 @@ int main(int argc, CHAR *argv[])
     }
     out = new std::ofstream(filename.c_str());
 
+ // Obtain  a key for TLS storage.
+    tls_key = PIN_CreateThreadDataKey(NULL);
+    if (tls_key == INVALID_TLS_KEY)
+    {
+        cerr << "number of already allocated keys reached the MAX_CLIENT_TLS_KEYS limit" << endl;
+        PIN_ExitProcess(1);
+    }
+    // Register ThreadStart to be called when a thread starts.
+    PIN_AddThreadStartFunction(ThreadStart, NULL);
+
+    // Register Fini to be called when thread exits.
+    PIN_AddThreadFiniFunction(ThreadFini, NULL);
 
     TRACE_AddInstrumentFunction(Trace, 0);
 

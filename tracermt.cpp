@@ -33,22 +33,9 @@ PIN_LOCK lock;
 // function to access thread-specific data
 thread_data_t* get_tls(THREADID threadid)
 {
-    thread_data_t* tdata = static_cast<thread_data_t*>(PIN_GetThreadData(tls_key, threadid));
-    if (tdata == NULL)
-    {
-        cerr << "PIN_GetThreadData(" << tls_key << "," << threadid << ") Failed" << endl;
-        PIN_ExitProcess(1);
-    }
-
-    PIN_GetLock(&lock, threadid);
+    
     std::map<THREADID, thread_data_t*>::const_iterator it = threads_data.find(threadid);
-    if ((it == threads_data.end()) || (it->second != tdata))
-    {
-        cerr << "PIN_GetThreadData(" << tls_key << "," << threadid << ") returned the wrong thread data" << endl;
-        PIN_ExitProcess(1);
-    }
-    PIN_ReleaseLock(&lock);
-    return tdata;
+    return  it->second;
 }
 
 // This function is called before every block

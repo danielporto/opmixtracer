@@ -224,7 +224,7 @@ LOCALVAR vector<const BBLSTATS*> statsList;
 
 /* ===================================================================== */
 
-VOID PIN_FAST_ANALYSIS_CALL docount(COUNTER * counter)
+VOID PIN_FAST_ANALYSIS_CALL docount(COUNTER * counter, THREADID threadid)
 {
     (*counter) += 1;
 }
@@ -272,6 +272,7 @@ VOID Trace(TRACE trace, VOID *v)
                                          IPOINT_BEFORE,
                                          AFUNPTR(docount),
                                          IARG_PTR, &(GlobalStatsDynamic.predicated_true[INS_Opcode(ins)]),
+                                         IARG_THREAD_ID,
                                          IARG_END);
             }
 
@@ -286,7 +287,7 @@ VOID Trace(TRACE trace, VOID *v)
 
         // Insert instrumentation to count the number of times the bbl is executed
         BBLSTATS * bblstats = new BBLSTATS(stats);
-        INS_InsertCall(head, IPOINT_BEFORE, AFUNPTR(docount), IARG_FAST_ANALYSIS_CALL, IARG_PTR, &(bblstats->_counter), IARG_END);
+        INS_InsertCall(head, IPOINT_BEFORE, AFUNPTR(docount), IARG_FAST_ANALYSIS_CALL, IARG_PTR, &(bblstats->_counter), IARG_THREAD_ID, IARG_END);
 
         // Remember the counter and stats so we can compute a summary at the end
         statsList.push_back(bblstats);

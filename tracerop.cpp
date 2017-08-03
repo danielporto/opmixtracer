@@ -8,9 +8,6 @@
 #include <fstream>
 #include <unistd.h>
 #include "pin.H"
-#include "control_manager.H"
-
-//using namespace CONTROLLER;
 
 /* ===================================================================== */
 /* Commandline Switches */
@@ -219,8 +216,8 @@ class BBLSTATS
 static  TLS_KEY tls_key = INVALID_TLS_KEY;
 INT32 numThreads = 0;
 static std::ofstream* out = 0;
-LOCALVAR vector<const BBLSTATS*> statsList;
-
+const UINT32 MAX_THREADS = 100;
+LOCALVAR vector<const BBLSTATS*> statsList[MAX_THREADS];
 
 /* ===================================================================== */
 
@@ -290,7 +287,7 @@ VOID Trace(TRACE trace, VOID *v)
         INS_InsertCall(head, IPOINT_BEFORE, AFUNPTR(docount), IARG_FAST_ANALYSIS_CALL, IARG_PTR, &(bblstats->_counter), IARG_THREAD_ID, IARG_END);
 
         // Remember the counter and stats so we can compute a summary at the end
-        statsList.push_back(bblstats);
+        statsList[PIN_ThreadId()].push_back(bblstats);
     }
 }
 
@@ -343,9 +340,11 @@ VOID Fini(int, VOID * v)
 
     // dynamic Counts
 
-    statsList.push_back(0); // add terminator marker
+    for(UINT32 i=0; i< MAX_THREADS; i++) 
+        statsList[i].push_back(0); // add terminator marker
 
-    for (vector<const BBLSTATS*>::iterator bi = statsList.begin(); bi != statsList.end(); bi++)
+    for(UINT32 i=0; i< MAX_THREADS; i++) 
+    for (vector<const BBLSTATS*>::iterator bi = statsList[i].begin(); bi != statsList[i].end(); bi++)
     {
         const BBLSTATS *b = (*bi);
 

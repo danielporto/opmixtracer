@@ -480,7 +480,7 @@ UINT32 maxThreads = 100;
 thread_data_t* threadDataArray= new thread_data_t[maxThreads];
 
 
-LOCALFUN thread_data_t* get_tls(THREADID tid)
+PIN_FAST_ANALYSIS_CALL thread_data_t* get_tls(THREADID tid)
 {
     // thread_data_t* tdata =
     //       static_cast<thread_data_t*>(PIN_GetThreadData(tls_key, tid));

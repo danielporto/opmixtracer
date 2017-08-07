@@ -480,7 +480,7 @@ UINT32 maxThreads = 100;
 thread_data_t* threadDataArray= new thread_data_t[maxThreads];
 
 
-thread_data_t* get_tls(THREADID tid)
+inline thread_data_t* get_tls(THREADID tid)
 {
     // thread_data_t* tdata =
     //       static_cast<thread_data_t*>(PIN_GetThreadData(tls_key, tid));
@@ -564,8 +564,9 @@ VOID validate_bbl_count(THREADID tid, ADDRINT block_count_for_trace)
 
 VOID PIN_FAST_ANALYSIS_CALL docount_bbl(ADDRINT block_id, THREADID tid)
 {
-    thread_data_t* tdata = get_tls(tid);
-    tdata->block_counts[block_id] += 1;
+    // thread_data_t* tdata = get_tls(tid);
+    // tdata->block_counts[block_id] += 1;
+    get_tls(tid)->block_counts[block_id] += 1;
 }
 
 

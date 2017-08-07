@@ -567,7 +567,7 @@ VOID PIN_FAST_ANALYSIS_CALL docount_bbl(ADDRINT block_id, THREADID tid)
     // thread_data_t* tdata = get_tls(tid);
     // tdata->block_counts[block_id] += 1;
     //get_tls(tid)->block_counts[block_id] += 1;
-    threadDataArray[tid]->block_counts[block_id] += 1;
+    threadDataArray[tid].block_counts[block_id] += 1;
 }
 
 

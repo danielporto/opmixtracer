@@ -480,18 +480,13 @@ UINT32 maxThreads = 100;
 thread_data_t* threadDataArray= new thread_data_t[maxThreads];
 
 
-inline thread_data_t* get_tls(THREADID tid)
+LOCALFUN thread_data_t* get_tls(THREADID tid)
 {
     // thread_data_t* tdata =
     //       static_cast<thread_data_t*>(PIN_GetThreadData(tls_key, tid));
     //    return tdata;
-
-
     return &threadDataArray[tid];
 }
-
-
-
 
 
 UINT32 numThreads = 0;

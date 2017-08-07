@@ -422,6 +422,8 @@ VOID DumpStats(ofstream& out,
                BOOL predicated_true,
                const string& title,
                THREADID tid);
+            
+
 /* ===================================================================== */
 
 #if defined(__GNUC__)
@@ -473,12 +475,23 @@ class thread_data_t
 
 };
 
+
+UINT32 maxThreads = 100;
+thread_data_t* threadDataArray= new thread_data_t[maxThreads];
+
+
 thread_data_t* get_tls(THREADID tid)
 {
-    thread_data_t* tdata =
-          static_cast<thread_data_t*>(PIN_GetThreadData(tls_key, tid));
-    return tdata;
+    // thread_data_t* tdata =
+    //       static_cast<thread_data_t*>(PIN_GetThreadData(tls_key, tid));
+    //    return tdata;
+
+
+    return &threadDataArray[tid];
 }
+
+
+
 
 
 UINT32 numThreads = 0;
@@ -487,13 +500,19 @@ VOID ThreadStart(THREADID tid, CONTEXT *ctxt, INT32 flags, VOID *v)
 {
     // This function is locked no need for a Pin Lock here
     numThreads++;
+    if(numThreads>maxThreads){
+        *out << "Max thread number has been reached, aborting!! increase the number of threads!!" <<endl;
+        exit(0);
+    }
     PIN_GetLock(&locks.lock, tid+2); // for output
     *out << "# Starting tid " << tid << endl;
     PIN_ReleaseLock(&locks.lock);
 
-    thread_data_t* tdata = new thread_data_t;
+    //thread_data_t* tdata = new thread_data_t;
     // remember my pointer for later
-    PIN_SetThreadData(tls_key, tdata, tid);
+    PIN_SetThreadData(tls_key, &threadDataArray[tid], tid);
+    
+    ;
 
 }
 

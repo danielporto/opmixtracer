@@ -28,6 +28,8 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 END_LEGAL */
+
+
 /* ===================================================================== */
 /*! @file This file contains a static and dynamic opcode/ISA extension/ISA
  *  category mix profiler
@@ -60,7 +62,7 @@ extern "C"{
 /* ===================================================================== */
 /* Commandline Switches */
 /* ===================================================================== */
-KNOB_COMMENT mix_knob_family("pintool:tracer", "Tracer knobs");
+KNOB_COMMENT tracer_knob_family("pintool:tracer", "Tracer knobs");
 KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE,         
              "pintool:tracer",   "o", "out.tracer", "specify profile file name");
 KNOB<BOOL>   KnobPid(KNOB_MODE_WRITEONCE,                
@@ -71,11 +73,11 @@ KNOB<BOOL>   KnobProfileStaticOnly(KNOB_MODE_WRITEONCE,
              "pintool:tracer",   "s", "0", "terminate after collection of static profile for main image");
 KNOB<BOOL>   KnobNoSharedLibs(KNOB_MODE_WRITEONCE,       
              "pintool:tracer",   "no_shared_libs", "0", "do not instrument shared libraries");
-KNOB<BOOL> KnobInstructionLengthMix(KNOB_MODE_WRITEONCE,  
+KNOB<BOOL> KnobInstructionLengthTracer(KNOB_MODE_WRITEONCE,  
              "pintool:tracer",   "ilen", "0", "Compute instruction length tracer");
-KNOB<BOOL> KnobCategoryMix(KNOB_MODE_WRITEONCE, 
+KNOB<BOOL> KnobCategoryTracer(KNOB_MODE_WRITEONCE, 
              "pintool:tracer",   "category", "0", "Compute ISA category tracer");
-KNOB<BOOL> KnobIformMix(KNOB_MODE_WRITEONCE, 
+KNOB<BOOL> KnobIformTracer(KNOB_MODE_WRITEONCE, 
              "pintool:tracer",   "iform", "0", "Compute ISA iform tracer");
 #ifndef TARGET_WINDOWS
 KNOB<BOOL>   KnobProfileDynamicOnly(KNOB_MODE_WRITEONCE, 
@@ -91,12 +93,32 @@ KNOB<UINT32> KnobTimer(KNOB_MODE_WRITEONCE,
 /* ===================================================================== */
 
 typedef enum { measure_opcode=0, measure_category=1, measure_ilen=2, measure_iform=3 } measurement_t;
-measurement_t measurement = measure_opcode;
-// key for accessing TLS storage in the threads. initialized once in main()
+
 typedef UINT32 stat_index_t;
+
 typedef UINT64 COUNTER;
-/* zero initialized */
+
 typedef map<UINT32,COUNTER> stat_map_t;
+
+#if defined(__GNUC__)
+#  if defined(TARGET_MAC) || defined(TARGET_WINDOWS)
+#    define ALIGN_LOCK __attribute__ ((aligned(16)))
+#  else
+#    define ALIGN_LOCK __attribute__ ((aligned(64)))
+#  endif
+#else
+# define ALIGN_LOCK __declspec(align(64))
+#endif
+
+typedef struct  {
+    char pad0[64];
+    PIN_LOCK  ALIGN_LOCK lock; /* for mediating output */
+    char pad1[64];
+    PIN_LOCK  ALIGN_LOCK bbl_list_lock; /* for the bbl list */
+} ALIGN_LOCK locks_t;
+
+/* ===================================================================== */
+
 class CSTATS
 {
   public:
@@ -116,6 +138,7 @@ class CSTATS
         predicated_true.erase(predicated_true.begin(),predicated_true.end());
     }
 };
+
 class BBLSTATS
 {
     // Our first pass sets up the types of stats we need to update for this
@@ -157,43 +180,23 @@ class thread_data_t
     }
 
 };
-#if defined(__GNUC__)
-#  if defined(TARGET_MAC) || defined(TARGET_WINDOWS)
-     // OS X* XCODE2.4.1 gcc and Cgywin gcc 3.4.x only allow for 16b
-     // alignment! So we need to pad!
-#    define ALIGN_LOCK __attribute__ ((aligned(16)))
-#  else
-#    define ALIGN_LOCK __attribute__ ((aligned(64)))
-#  endif
-#else
-# define ALIGN_LOCK __declspec(align(64))
-#endif
 
-typedef struct  {
-    char pad0[64];
-    PIN_LOCK  ALIGN_LOCK lock; /* for mediating output */
-    char pad1[64];
-    PIN_LOCK  ALIGN_LOCK bbl_list_lock; /* for the bbl list */
-} ALIGN_LOCK locks_t;
+/* ===================================================================== */
+
 
 locks_t locks;
-
+measurement_t measurement = measure_opcode;
 static  TLS_KEY tls_key;
 static std::ofstream* out;
 CSTATS GlobalStatsStatic;  // summary stats for static analysis
 CSTATS GlobalStatsDynamic;
 LOCALVAR vector<BBLSTATS*> statsList;
+THREADID intTid;
 UINT32 maxThreads = 100;
 UINT32 numThreads = 0;
 UINT32 timeInterval = 1000;
+
 thread_data_t* threadDataArray= new thread_data_t[maxThreads];
-
-THREADID intTid;
-
-VOID DumpStats(ofstream& out, CSTATS& stats, BOOL predicated_true, const string& title, THREADID tid);
-/* ===================================================================== */
-
-
 
 /* ===================================================================== */
 
@@ -312,6 +315,8 @@ LOCALFUN bool IsScalarSimd(INS ins)
     xed_decoded_inst_t* xedd = INS_XedDec(ins);
     return xed_decoded_inst_get_attribute(xedd, XED_ATTRIBUTE_SIMD_SCALAR);
 }
+
+/* ===================================================================== */
 
 LOCALFUN  UINT32 IndexStringLength(BBL bbl, BOOL memory_access_profile)
 {
@@ -466,6 +471,7 @@ LOCALFUN string IndexToString( UINT32 index )
 
 }
 
+
 /*=============================================================================*/
 
 
@@ -476,6 +482,197 @@ LOCALFUN thread_data_t* get_tls(THREADID tid)
     //    return tdata;
     return &threadDataArray[tid];
 }
+
+/* ===================================================================== */
+
+VOID updateStats()
+{
+    //thread_data_t* tdata;
+
+    // GlobalStatsDynamic.clear();
+    // for(UINT32 tid=0; t < numThreads; tid++ )
+    // {
+    //     tdata = get_tls(tid);
+
+    //     PIN_GetLock(&locks.bbl_list_lock,tid+2);
+    //     UINT32 limit = tdata->size();
+    //     if ( limit  > statsList.size() )
+    //         limit = statsList.size();
+    
+    //     for(UINT32 i=0;i< limit ; i++)
+    //     {
+    //         COUNTER bcount = tdata->block_counts[i];
+    //         BBLSTATS* b = statsList[i];
+    //         /* the last test below is for when new bbl's get jitted while we
+    //         * are emitting stats */
+    //         if (b && b->_stats)
+    //             for (const stat_index_t* stats = b->_stats; *stats; stats++) {
+    //                 GlobalStatsDynamic.unpredicated[*stats] += bcount;
+    //             }
+    //     }
+    //     PIN_ReleaseLock(&locks.bbl_list_lock);
+
+
+    // }
+}
+
+/* ===================================================================== */
+VOID printTrace(VOID * arg)
+{
+    
+        while(true)
+        {
+            PIN_Sleep(timeInterval);
+            
+
+            *out << "Waited 1 second = " << get_timestamp() << endl;
+
+        }
+    
+}
+/* ===================================================================== */
+VOID DumpStats(ofstream& out,
+               CSTATS& stats,
+               BOOL predicated_true,
+               const string& title,
+               THREADID tid)
+{
+    out << "#\n# " << title << "\n#\n";
+    if (tid  != INVALID_THREADID)
+        out << "# TID " << tid << "\n";
+    out << "# ";
+    const char *label = 0;
+    if (measurement == measure_opcode)
+        label = "opcode";
+    else if (measurement == measure_ilen)
+        label = "inslen";
+    else if (measurement == measure_category)
+        label = "category";
+    else if (measurement == measure_iform)
+        label = "iform";
+
+    if (label)
+        out << ljstr(label,24);
+
+    out<< setw(16) << "count";
+    if( predicated_true )
+        out << "    count-predicated-true";
+    out << "\n#\n";
+
+    // Compute the "total" bin. Stop at the INDEX_SPECIAL for all histograms
+    // except the iform. Iforms do not use the special rows, so we count everything.
+
+    // build a map of the valid stats index values for all 3 tables.
+    map<UINT32, bool> m;
+
+    COUNTER tu=0;
+    for(stat_map_t::iterator it = stats.unpredicated.begin() ;  it != stats.unpredicated.end() ; it++) {
+        if (measurement == measure_iform || it->first < INDEX_SPECIAL)
+            tu += it->second;
+        m[it->first]=true;
+    }
+
+    COUNTER tpt=0;
+    for(stat_map_t::iterator it=stats.predicated_true.begin();it != stats.predicated_true.end() ; it++) {
+        if (measurement == measure_iform || it->first < INDEX_SPECIAL)
+            tpt += it->second;
+        m[it->first]=true;
+    }
+
+    for(map<UINT32,bool>::iterator it = m.begin(); it != m.end(); it++) {
+        stat_map_t::iterator s;
+        COUNTER up=0;
+        UINT32 indx = it->first;
+
+        s = stats.unpredicated.find(indx);
+        if (s !=  stats.unpredicated.end())
+            up = s->second;
+
+        if (up == 0)
+            continue;
+
+        out << ljstr(IndexToString(indx),25) << " " << setw(16) << up;
+        if( predicated_true ) {
+            COUNTER prt=0;
+            s = stats.predicated_true.find(indx);
+            if (s !=  stats.predicated_true.end())
+            {
+                prt = s->second;
+                out << " " << setw(16) << prt;
+            }
+        }
+        out << endl;
+    }
+
+    // print the totals
+    out << ljstr("*total",25) << " " << setw(16) << tu;
+    if( predicated_true )
+        out << " " << setw(16) << tpt;
+    out << endl;
+}
+
+/* ===================================================================== */
+
+VOID emit_static_stats()
+{
+    *out << "# EMIT_STATIC_STATS " <<  endl;
+    DumpStats(*out, GlobalStatsStatic, false, "$static-counts",INVALID_THREADID);
+    *out << endl << "# END_STATIC_STATS" <<  endl;
+}
+/* ===================================================================== */
+
+VOID zero_stats(THREADID tid)
+{
+    thread_data_t* tdata = get_tls(tid);
+    tdata->cstats.clear();
+    UINT32 limit =  tdata->size();
+    for(UINT32 i=0;i< limit;i++)
+        tdata->block_counts[i]=0;
+}
+/* ===================================================================== */
+
+void combine_dynamic_stats(unsigned int numThreads)
+{
+    // combine all the rows from each thread in to the total variable.
+    CSTATS total;
+    for (THREADID i=0;i<numThreads; i++)
+    {
+        thread_data_t* tdata = get_tls(i);
+
+        for(stat_map_t::iterator it = tdata->cstats.unpredicated.begin(); it != tdata->cstats.unpredicated.end() ; it++) {
+            stat_map_t::iterator x = total.unpredicated.find(it->first);
+            if (x == total.unpredicated.end())
+                total.unpredicated[it->first] = it->second;
+            else
+                x->second += it->second;
+        }
+
+        for(stat_map_t::iterator it = tdata->cstats.predicated.begin(); it != tdata->cstats.predicated.end() ; it++) {
+            stat_map_t::iterator x = total.predicated.find(it->first);
+            if (x == total.predicated.end())
+                total.predicated[it->first] = it->second;
+            else
+                x->second += it->second;
+        }
+
+
+        for(stat_map_t::iterator it = tdata->cstats.predicated_true.begin(); it != tdata->cstats.predicated_true.end() ; it++) {
+            stat_map_t::iterator x = total.predicated_true.find(it->first);
+            if (x == total.predicated_true.end())
+                total.predicated_true[it->first] = it->second;
+            else
+                x->second += it->second;
+        }
+    }
+
+    *out << "# EMIT_GLOBAL_DYNAMIC_STATS "  << endl;
+    DumpStats(*out, total, false, "$global-dynamic-counts",INVALID_THREADID);
+    *out << endl << "# END_GLOBAL_DYNAMIC_STATS" <<  endl;
+
+}
+/*=============================================================================*/
+/* Thread management specific functions */
+/*=============================================================================*/
 
 VOID ThreadStart(THREADID tid, CONTEXT *ctxt, INT32 flags, VOID *v)
 {
@@ -533,39 +730,9 @@ VOID ThreadFini(THREADID tid, const CONTEXT *ctxt, INT32 code, VOID *v)
 
 }
 
-
-VOID updateStats()
-{
-    //thread_data_t* tdata;
-
-    // GlobalStatsDynamic.clear();
-    // for(UINT32 tid=0; t < numThreads; tid++ )
-    // {
-    //     tdata = get_tls(tid);
-
-    //     PIN_GetLock(&locks.bbl_list_lock,tid+2);
-    //     UINT32 limit = tdata->size();
-    //     if ( limit  > statsList.size() )
-    //         limit = statsList.size();
-    
-    //     for(UINT32 i=0;i< limit ; i++)
-    //     {
-    //         COUNTER bcount = tdata->block_counts[i];
-    //         BBLSTATS* b = statsList[i];
-    //         /* the last test below is for when new bbl's get jitted while we
-    //         * are emitting stats */
-    //         if (b && b->_stats)
-    //             for (const stat_index_t* stats = b->_stats; *stats; stats++) {
-    //                 GlobalStatsDynamic.unpredicated[*stats] += bcount;
-    //             }
-    //     }
-    //     PIN_ReleaseLock(&locks.bbl_list_lock);
-
-
-    // }
-}
-
-/* ===================================================================== */
+/*=============================================================================*/
+/* Analysis tools */
+/*=============================================================================*/
 VOID validate_bbl_count(THREADID tid, ADDRINT block_count_for_trace)
 {
     thread_data_t* tdata = get_tls(tid);
@@ -589,17 +756,6 @@ VOID docount_predicated_true(UINT32 index, THREADID tid)
         tdata->cstats.predicated_true[index] = 1;
     else
         i->second += 1;
-}
-
-/* ===================================================================== */
-
-VOID zero_stats(THREADID tid)
-{
-    thread_data_t* tdata = get_tls(tid);
-    tdata->cstats.clear();
-    UINT32 limit =  tdata->size();
-    for(UINT32 i=0;i< limit;i++)
-        tdata->block_counts[i]=0;
 }
 
 /* ===================================================================== */
@@ -695,142 +851,7 @@ VOID Trace(TRACE trace, VOID *v)
     }
 
 }
-
 /* ===================================================================== */
-VOID DumpStats(ofstream& out,
-               CSTATS& stats,
-               BOOL predicated_true,
-               const string& title,
-               THREADID tid)
-{
-    out << "#\n# " << title << "\n#\n";
-    if (tid  != INVALID_THREADID)
-        out << "# TID " << tid << "\n";
-    out << "# ";
-    const char *label = 0;
-    if (measurement == measure_opcode)
-        label = "opcode";
-    else if (measurement == measure_ilen)
-        label = "inslen";
-    else if (measurement == measure_category)
-        label = "category";
-    else if (measurement == measure_iform)
-        label = "iform";
-
-    if (label)
-        out << ljstr(label,24);
-
-    out<< setw(16) << "count";
-    if( predicated_true )
-        out << "    count-predicated-true";
-    out << "\n#\n";
-
-    // Compute the "total" bin. Stop at the INDEX_SPECIAL for all histograms
-    // except the iform. Iforms do not use the special rows, so we count everything.
-
-    // build a map of the valid stats index values for all 3 tables.
-    map<UINT32, bool> m;
-
-    COUNTER tu=0;
-    for(stat_map_t::iterator it = stats.unpredicated.begin() ;  it != stats.unpredicated.end() ; it++) {
-        if (measurement == measure_iform || it->first < INDEX_SPECIAL)
-            tu += it->second;
-        m[it->first]=true;
-    }
-
-    COUNTER tpt=0;
-    for(stat_map_t::iterator it=stats.predicated_true.begin();it != stats.predicated_true.end() ; it++) {
-        if (measurement == measure_iform || it->first < INDEX_SPECIAL)
-            tpt += it->second;
-        m[it->first]=true;
-    }
-
-    for(map<UINT32,bool>::iterator it = m.begin(); it != m.end(); it++) {
-        stat_map_t::iterator s;
-        COUNTER up=0;
-        UINT32 indx = it->first;
-
-        s = stats.unpredicated.find(indx);
-        if (s !=  stats.unpredicated.end())
-            up = s->second;
-
-        if (up == 0)
-            continue;
-
-        out << ljstr(IndexToString(indx),25) << " " << setw(16) << up;
-        if( predicated_true ) {
-            COUNTER prt=0;
-            s = stats.predicated_true.find(indx);
-            if (s !=  stats.predicated_true.end())
-            {
-                prt = s->second;
-                out << " " << setw(16) << prt;
-            }
-        }
-        out << endl;
-    }
-
-    // print the totals
-    out << ljstr("*total",25) << " " << setw(16) << tu;
-    if( predicated_true )
-        out << " " << setw(16) << tpt;
-    out << endl;
-}
-
-
-/* ===================================================================== */
-
-VOID emit_static_stats()
-{
-    *out << "# EMIT_STATIC_STATS " <<  endl;
-    DumpStats(*out, GlobalStatsStatic, false, "$static-counts",INVALID_THREADID);
-    *out << endl << "# END_STATIC_STATS" <<  endl;
-}
-
-
-
-
-/* ===================================================================== */
-
-void combine_dynamic_stats(unsigned int numThreads)
-{
-    // combine all the rows from each thread in to the total variable.
-    CSTATS total;
-    for (THREADID i=0;i<numThreads; i++)
-    {
-        thread_data_t* tdata = get_tls(i);
-
-        for(stat_map_t::iterator it = tdata->cstats.unpredicated.begin(); it != tdata->cstats.unpredicated.end() ; it++) {
-            stat_map_t::iterator x = total.unpredicated.find(it->first);
-            if (x == total.unpredicated.end())
-                total.unpredicated[it->first] = it->second;
-            else
-                x->second += it->second;
-        }
-
-        for(stat_map_t::iterator it = tdata->cstats.predicated.begin(); it != tdata->cstats.predicated.end() ; it++) {
-            stat_map_t::iterator x = total.predicated.find(it->first);
-            if (x == total.predicated.end())
-                total.predicated[it->first] = it->second;
-            else
-                x->second += it->second;
-        }
-
-
-        for(stat_map_t::iterator it = tdata->cstats.predicated_true.begin(); it != tdata->cstats.predicated_true.end() ; it++) {
-            stat_map_t::iterator x = total.predicated_true.find(it->first);
-            if (x == total.predicated_true.end())
-                total.predicated_true[it->first] = it->second;
-            else
-                x->second += it->second;
-        }
-    }
-
-    *out << "# EMIT_GLOBAL_DYNAMIC_STATS "  << endl;
-    DumpStats(*out, total, false, "$global-dynamic-counts",INVALID_THREADID);
-    *out << endl << "# END_GLOBAL_DYNAMIC_STATS" <<  endl;
-
-}
 
 VOID Fini(int, VOID * v) // only runs once for the application
 {
@@ -841,22 +862,6 @@ VOID Fini(int, VOID * v) // only runs once for the application
     out->close();
 }
 
-/* ===================================================================== */
-VOID printTrace(VOID * arg)
-{
-    
-        while(true)
-        {
-            PIN_Sleep(timeInterval);
-            
-
-            *out << "Waited 1 second = " << get_timestamp() << endl;
-
-        }
-    
-}
-
-/* ===================================================================== */
 /* ===================================================================== */
 /* Static analysis */
 /* ===================================================================== */
@@ -930,16 +935,16 @@ int main(int argc, CHAR **argv)
 
 
     // make sure that exactly one thing-to-count knob is specified.
-    if (KnobInstructionLengthMix.Value() && KnobCategoryMix.Value()) {
+    if (KnobInstructionLengthTracer.Value() && KnobCategoryTracer.Value()) {
         cerr << "Must have at most  one of: -iform, -ilen or -category "
              << "as a pintool option" << endl;
         exit(1);
     }
-    if (KnobInstructionLengthMix.Value())
+    if (KnobInstructionLengthTracer.Value())
         measurement = measure_ilen;
-    if (KnobCategoryMix.Value())
+    if (KnobCategoryTracer.Value())
         measurement = measure_category;
-    if (KnobIformMix.Value()) {
+    if (KnobIformTracer.Value()) {
         measurement = measure_iform;
     }
     timeInterval = KnobTimer.Value();

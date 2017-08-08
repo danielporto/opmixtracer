@@ -40,7 +40,6 @@ END_LEGAL */
 #define strdup _strdup
 #endif
 
-#include <vector>
 #include <iostream>
 #include <sstream>
 #include <iomanip>
@@ -56,53 +55,155 @@ END_LEGAL */
 extern "C"{
 #include "xed-interface.h"
 }
-
-
-// key for accessing TLS storage in the threads. initialized once in main()
-static  TLS_KEY tls_key;
-
-typedef UINT32 stat_index_t;
-
+#include "utils.h"
 
 /* ===================================================================== */
 /* Commandline Switches */
 /* ===================================================================== */
-KNOB_COMMENT mix_knob_family("pintool:mix", "Mix knobs");
-KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE,         "pintool:mix",
-    "o", "mix.out", "specify profile file name");
-KNOB<BOOL>   KnobPid(KNOB_MODE_WRITEONCE,                "pintool:mix",
-    "i", "0", "append pid to output file name");
-KNOB<BOOL>   KnobProfilePredicated(KNOB_MODE_WRITEONCE,  "pintool:mix",
-    "p", "0", "enable accurate profiling for predicated instructions");
-KNOB<BOOL>   KnobProfileStaticOnly(KNOB_MODE_WRITEONCE,  "pintool:mix",
-    "s", "0", "terminate after collection of static profile for main image");
+KNOB_COMMENT mix_knob_family("pintool:tracer", "Tracer knobs");
+KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE,         
+             "pintool:tracer",   "o", "out.tracer", "specify profile file name");
+KNOB<BOOL>   KnobPid(KNOB_MODE_WRITEONCE,                
+             "pintool:tracer",   "i", "1", "append pid to output file name");
+KNOB<BOOL>   KnobProfilePredicated(KNOB_MODE_WRITEONCE,  
+             "pintool:tracer",   "p", "0", "enable accurate profiling for predicated instructions");
+KNOB<BOOL>   KnobProfileStaticOnly(KNOB_MODE_WRITEONCE,  
+             "pintool:tracer",   "s", "0", "terminate after collection of static profile for main image");
+KNOB<BOOL>   KnobNoSharedLibs(KNOB_MODE_WRITEONCE,       
+             "pintool:tracer",   "no_shared_libs", "0", "do not instrument shared libraries");
+KNOB<BOOL> KnobInstructionLengthMix(KNOB_MODE_WRITEONCE,  
+             "pintool:tracer",   "ilen", "0", "Compute instruction length tracer");
+KNOB<BOOL> KnobCategoryMix(KNOB_MODE_WRITEONCE, 
+             "pintool:tracer",   "category", "0", "Compute ISA category tracer");
+KNOB<BOOL> KnobIformMix(KNOB_MODE_WRITEONCE, 
+             "pintool:tracer",   "iform", "0", "Compute ISA iform tracer");
 #ifndef TARGET_WINDOWS
-KNOB<BOOL>   KnobProfileDynamicOnly(KNOB_MODE_WRITEONCE, "pintool:mix",
-    "d", "0", "Only collect dynamic profile");
+KNOB<BOOL>   KnobProfileDynamicOnly(KNOB_MODE_WRITEONCE, 
+             "pintool:tracer",   "d", "0", "Only collect dynamic profile");
 #else
-KNOB<BOOL>   KnobProfileDynamicOnly(KNOB_MODE_WRITEONCE, "pintool:mix",
-    "d", "1", "Only collect dynamic profile");
+KNOB<BOOL>   KnobProfileDynamicOnly(KNOB_MODE_WRITEONCE, 
+             "pintool:tracer",   "d", "1", "Only collect dynamic profile");
 #endif
-KNOB<BOOL>   KnobNoSharedLibs(KNOB_MODE_WRITEONCE,       "pintool:mix",
-    "no_shared_libs", "0", "do not instrument shared libraries");
-
-KNOB<BOOL> KnobInstructionLengthMix(KNOB_MODE_WRITEONCE,  "pintool:mix","ilen", "0", "Compute instruction length mix");
-KNOB<BOOL> KnobCategoryMix(KNOB_MODE_WRITEONCE, "pintool:mix", "category", "0", "Compute ISA category mix");
-KNOB<BOOL> KnobIformMix(KNOB_MODE_WRITEONCE, "pintool:mix", "iform", "0", "Compute ISA iform mix");
-
+KNOB<UINT32> KnobTimer(KNOB_MODE_WRITEONCE,         
+             "pintool:tracer",   "t", "1000", "specify the time interval");
+/* ===================================================================== */
+/*Types*/
+/* ===================================================================== */
 
 typedef enum { measure_opcode=0, measure_category=1, measure_ilen=2, measure_iform=3 } measurement_t;
 measurement_t measurement = measure_opcode;
+// key for accessing TLS storage in the threads. initialized once in main()
+typedef UINT32 stat_index_t;
+typedef UINT64 COUNTER;
+/* zero initialized */
+typedef map<UINT32,COUNTER> stat_map_t;
+class CSTATS
+{
+  public:
+    CSTATS()
+    {
+        clear();
+    }
+
+    stat_map_t unpredicated;
+    stat_map_t predicated;
+    stat_map_t predicated_true;
+
+    VOID clear()
+    {
+        unpredicated.erase(unpredicated.begin(),unpredicated.end());
+        predicated.erase(predicated.begin(),predicated.end());
+        predicated_true.erase(predicated_true.begin(),predicated_true.end());
+    }
+};
+class BBLSTATS
+{
+    // Our first pass sets up the types of stats we need to update for this
+    // block. We have one stat per instruction in the block. The _stats
+    // array is null terminated.
+  public:
+    const stat_index_t* const _stats;
+    const ADDRINT _pc; // start PC of the block
+    const UINT32 _ninst; // # of instructions
+    const UINT32 _nbytes; // # of bytes in the block
+    BBLSTATS(stat_index_t* stats, ADDRINT pc, UINT32 ninst, UINT32 nbytes)
+        : _stats(stats),
+          _pc(pc),
+          _ninst(ninst),
+          _nbytes(nbytes) {};
+};
+
+class thread_data_t
+{
+  public:
+    thread_data_t()
+    {
+    }
+    CSTATS cstats;
+
+    vector<COUNTER> block_counts;
+
+    UINT32 size()
+    {
+        UINT32 limit;
+        limit = block_counts.size();
+        return limit;
+    }
+
+    void resize(UINT32 n)
+    {
+        if (size() < n)
+            block_counts.resize(2*n);
+    }
+
+};
+#if defined(__GNUC__)
+#  if defined(TARGET_MAC) || defined(TARGET_WINDOWS)
+     // OS X* XCODE2.4.1 gcc and Cgywin gcc 3.4.x only allow for 16b
+     // alignment! So we need to pad!
+#    define ALIGN_LOCK __attribute__ ((aligned(16)))
+#  else
+#    define ALIGN_LOCK __attribute__ ((aligned(64)))
+#  endif
+#else
+# define ALIGN_LOCK __declspec(align(64))
+#endif
+
+typedef struct  {
+    char pad0[64];
+    PIN_LOCK  ALIGN_LOCK lock; /* for mediating output */
+    char pad1[64];
+    PIN_LOCK  ALIGN_LOCK bbl_list_lock; /* for the bbl list */
+} ALIGN_LOCK locks_t;
+
+locks_t locks;
+
+static  TLS_KEY tls_key;
+static std::ofstream* out;
+CSTATS GlobalStatsStatic;  // summary stats for static analysis
+CSTATS GlobalStatsDynamic;
+LOCALVAR vector<BBLSTATS*> statsList;
+UINT32 maxThreads = 100;
+UINT32 numThreads = 0;
+UINT32 timeInterval = 1000;
+thread_data_t* threadDataArray= new thread_data_t[maxThreads];
+
+THREADID intTid;
+
+VOID DumpStats(ofstream& out, CSTATS& stats, BOOL predicated_true, const string& title, THREADID tid);
+/* ===================================================================== */
+
+
 
 /* ===================================================================== */
 
 INT32 Usage()
 {
     cerr << "This pin tool computes a static and dynamic opcode, "
-         << "instruction form, instruction length, extension or category mix profile\n\n";
+         << "instruction form, instruction length, extension or category tracer profile\n\n";
     cerr << KNOB_BASE::StringKnobSummary();
     cerr << endl;
-    cerr << "The default is to do opcode and ISA extension profileing" << endl;
+    cerr << "The default is to do opcode and ISA extension profiling" << endl;
     cerr << "At most one of -iform, -ilen or  -category is allowed" << endl;
     cerr << endl;
     return -1;
@@ -365,119 +466,7 @@ LOCALFUN string IndexToString( UINT32 index )
 
 }
 
-/* ===================================================================== */
-/* ===================================================================== */
-typedef UINT64 COUNTER;
-
-
-/* zero initialized */
-
-typedef map<UINT32,COUNTER> stat_map_t;
-
-class CSTATS
-{
-  public:
-    CSTATS()
-    {
-        clear();
-    }
-
-    stat_map_t unpredicated;
-    stat_map_t predicated;
-    stat_map_t predicated_true;
-
-    VOID clear()
-    {
-        unpredicated.erase(unpredicated.begin(),unpredicated.end());
-        predicated.erase(predicated.begin(),predicated.end());
-        predicated_true.erase(predicated_true.begin(),predicated_true.end());
-    }
-};
-
-
-
-CSTATS GlobalStatsStatic;  // summary stats for static analysis
-
-class BBLSTATS
-{
-    // Our first pass sets up the types of stats we need to update for this
-    // block. We have one stat per instruction in the block. The _stats
-    // array is null terminated.
-  public:
-    const stat_index_t* const _stats;
-    const ADDRINT _pc; // start PC of the block
-    const UINT32 _ninst; // # of instructions
-    const UINT32 _nbytes; // # of bytes in the block
-    BBLSTATS(stat_index_t* stats, ADDRINT pc, UINT32 ninst, UINT32 nbytes)
-        : _stats(stats),
-          _pc(pc),
-          _ninst(ninst),
-          _nbytes(nbytes) {};
-};
-
-
-LOCALVAR vector<BBLSTATS*> statsList;
-VOID DumpStats(ofstream& out,
-               CSTATS& stats,
-               BOOL predicated_true,
-               const string& title,
-               THREADID tid);
-            
-
-/* ===================================================================== */
-
-#if defined(__GNUC__)
-#  if defined(TARGET_MAC) || defined(TARGET_WINDOWS)
-     // OS X* XCODE2.4.1 gcc and Cgywin gcc 3.4.x only allow for 16b
-     // alignment! So we need to pad!
-#    define ALIGN_LOCK __attribute__ ((aligned(16)))
-#  else
-#    define ALIGN_LOCK __attribute__ ((aligned(64)))
-#  endif
-#else
-# define ALIGN_LOCK __declspec(align(64))
-#endif
-
-typedef struct  {
-    char pad0[64];
-    PIN_LOCK  ALIGN_LOCK lock; /* for mediating output */
-    char pad1[64];
-    PIN_LOCK  ALIGN_LOCK bbl_list_lock; /* for the bbl list */
-} ALIGN_LOCK locks_t;
-
-locks_t locks;
-
-
-static std::ofstream* out;
-
-class thread_data_t
-{
-  public:
-    thread_data_t()
-    {
-    }
-    CSTATS cstats;
-
-    vector<COUNTER> block_counts;
-
-    UINT32 size()
-    {
-        UINT32 limit;
-        limit = block_counts.size();
-        return limit;
-    }
-
-    void resize(UINT32 n)
-    {
-        if (size() < n)
-            block_counts.resize(2*n);
-    }
-
-};
-
-
-UINT32 maxThreads = 100;
-thread_data_t* threadDataArray= new thread_data_t[maxThreads];
+/*=============================================================================*/
 
 
 LOCALFUN thread_data_t* get_tls(THREADID tid)
@@ -487,9 +476,6 @@ LOCALFUN thread_data_t* get_tls(THREADID tid)
     //    return tdata;
     return &threadDataArray[tid];
 }
-
-
-UINT32 numThreads = 0;
 
 VOID ThreadStart(THREADID tid, CONTEXT *ctxt, INT32 flags, VOID *v)
 {
@@ -507,7 +493,6 @@ VOID ThreadStart(THREADID tid, CONTEXT *ctxt, INT32 flags, VOID *v)
     // remember my pointer for later
     PIN_SetThreadData(tls_key, &threadDataArray[tid], tid);
     
-    ;
 
 }
 
@@ -528,6 +513,7 @@ VOID ThreadFini(THREADID tid, const CONTEXT *ctxt, INT32 code, VOID *v)
     UINT32 limit = tdata->size();
     if ( limit  > statsList.size() )
         limit = statsList.size();
+
     for(UINT32 i=0;i< limit ; i++)
     {
         COUNTER bcount = tdata->block_counts[i];
@@ -548,7 +534,36 @@ VOID ThreadFini(THREADID tid, const CONTEXT *ctxt, INT32 code, VOID *v)
 }
 
 
+VOID updateStats()
+{
+    //thread_data_t* tdata;
 
+    // GlobalStatsDynamic.clear();
+    // for(UINT32 tid=0; t < numThreads; tid++ )
+    // {
+    //     tdata = get_tls(tid);
+
+    //     PIN_GetLock(&locks.bbl_list_lock,tid+2);
+    //     UINT32 limit = tdata->size();
+    //     if ( limit  > statsList.size() )
+    //         limit = statsList.size();
+    
+    //     for(UINT32 i=0;i< limit ; i++)
+    //     {
+    //         COUNTER bcount = tdata->block_counts[i];
+    //         BBLSTATS* b = statsList[i];
+    //         /* the last test below is for when new bbl's get jitted while we
+    //         * are emitting stats */
+    //         if (b && b->_stats)
+    //             for (const stat_index_t* stats = b->_stats; *stats; stats++) {
+    //                 GlobalStatsDynamic.unpredicated[*stats] += bcount;
+    //             }
+    //     }
+    //     PIN_ReleaseLock(&locks.bbl_list_lock);
+
+
+    // }
+}
 
 /* ===================================================================== */
 VOID validate_bbl_count(THREADID tid, ADDRINT block_count_for_trace)
@@ -588,7 +603,6 @@ VOID zero_stats(THREADID tid)
 }
 
 /* ===================================================================== */
-
 
 VOID Trace(TRACE trace, VOID *v)
 {
@@ -765,8 +779,6 @@ VOID DumpStats(ofstream& out,
 
 
 /* ===================================================================== */
-static UINT32 stat_dump_count = 0;
-
 
 VOID emit_static_stats()
 {
@@ -814,7 +826,7 @@ void combine_dynamic_stats(unsigned int numThreads)
         }
     }
 
-    *out << "# EMIT_GLOBAL_DYNAMIC_STATS   EMIT# " << stat_dump_count << endl;
+    *out << "# EMIT_GLOBAL_DYNAMIC_STATS "  << endl;
     DumpStats(*out, total, false, "$global-dynamic-counts",INVALID_THREADID);
     *out << endl << "# END_GLOBAL_DYNAMIC_STATS" <<  endl;
 
@@ -829,7 +841,24 @@ VOID Fini(int, VOID * v) // only runs once for the application
     out->close();
 }
 
+/* ===================================================================== */
+VOID printTrace(VOID * arg)
+{
+    
+        while(true)
+        {
+            PIN_Sleep(timeInterval);
+            
 
+            *out << "Waited 1 second = " << get_timestamp() << endl;
+
+        }
+    
+}
+
+/* ===================================================================== */
+/* ===================================================================== */
+/* Static analysis */
 /* ===================================================================== */
 
 VOID Image(IMG img, VOID * v)
@@ -897,7 +926,7 @@ int main(int argc, CHAR **argv)
         filename += "." + decstr(getpid());
     }
     out = new std::ofstream(filename.c_str());
-    *out << "# Mix output version 2" << endl;
+    *out << "# Tracer output version 2" << endl;
 
 
     // make sure that exactly one thing-to-count knob is specified.
@@ -913,6 +942,7 @@ int main(int argc, CHAR **argv)
     if (KnobIformMix.Value()) {
         measurement = measure_iform;
     }
+    timeInterval = KnobTimer.Value();
 
 
     TRACE_AddInstrumentFunction(Trace, 0);
@@ -923,6 +953,9 @@ int main(int argc, CHAR **argv)
 
     if( !KnobProfileDynamicOnly.Value() )
         IMG_AddInstrumentFunction(Image, 0);
+
+    intTid = PIN_SpawnInternalThread(printTrace, NULL, 0, NULL);
+    ASSERT(intTid != INVALID_THREADID, "Fail to spawn internal print thread");
 
     PIN_StartProgram();    // Never returns
     return 0;

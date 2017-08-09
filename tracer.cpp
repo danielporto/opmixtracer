@@ -533,6 +533,60 @@ VOID updateStats()
 
 	}
 }
+
+/* ===================================================================== */
+
+
+VOID PrintStatsToCSV(ofstream& out, UINT64 timestamp, CSTATS& stats,
+		BOOL predicated_true) {
+	// Compute the "total" bin. Stop at the INDEX_SPECIAL for all histograms
+	// except the iform. Iforms do not use the special rows, so we count everything.
+
+	// build a map of the valid stats index values for all 3 tables.
+	map<UINT32, bool> m;
+
+	stat_map_t *statss;
+	statss = predicated_true ? &stats.predicated_true : &stats.unpredicated;
+
+	COUNTER tu = 0;
+	for (stat_map_t::iterator it = statss->begin(); it != statss->end(); it++) {
+		if (measurement == measure_iform || it->first < INDEX_SPECIAL)
+			tu += it->second;
+		m[it->first] = true;
+	}
+
+	out << "!Timestamp;";
+	for (map<UINT32, bool>::iterator it = m.begin(); it != m.end(); it++) {
+		stat_map_t::iterator s;
+		COUNTER up = 0;
+		UINT32 indx = it->first;
+		s = statss->find(indx);
+		if (s != statss->end())
+			up = s->second;
+
+		if (up == 0)
+			continue;
+		out << IndexToString(indx) << ";";
+	}
+	out << "*total;" << endl;
+
+	out << timestamp << ";";
+	for (map<UINT32, bool>::iterator it = m.begin(); it != m.end(); it++) {
+		stat_map_t::iterator s;
+		COUNTER up = 0;
+		UINT32 indx = it->first;
+		s = statss->find(indx);
+		if (s != statss->end())
+			up = s->second;
+
+		if (up == 0)
+			continue;
+		out << up << ";";
+	}
+	// print the totals
+	out << tu << endl;
+}
+
 /* ===================================================================== */
 VOID DumpStats(ofstream& out,
 		CSTATS& stats,
@@ -620,13 +674,18 @@ VOID printTraceThread(VOID * arg)
 
 	while(traceEnabled)
 	{
+//		PIN_Sleep(timeInterval);
+//		updateStats();
+//		*out << "Waited 1 second = " << get_timestamp() << endl;
+//		// emit the dynamic stats
+//		*out << "# EMIT_DYNAMIC_STATS"  << endl;
+//		DumpStats(*out, GlobalStatsDynamic, KnobProfilePredicated, "$dynamic-counts",0);
+//		*out << "# END_DYNAMIC_STATS" <<  endl;
+
 		PIN_Sleep(timeInterval);
 		updateStats();
-		*out << "Waited 1 second = " << get_timestamp() << endl;
-		// emit the dynamic stats
-		*out << "# EMIT_DYNAMIC_STATS"  << endl;
-		DumpStats(*out, GlobalStatsDynamic, KnobProfilePredicated, "$dynamic-counts",0);
-		*out << "# END_DYNAMIC_STATS" <<  endl;
+		PrintStatsToCSV(*out, get_timestamp() ,GlobalStatsDynamic, KnobProfilePredicated);
+
 	}
 
 }
@@ -737,37 +796,7 @@ VOID ThreadStart(THREADID tid, CONTEXT *ctxt, INT32 flags, VOID *v)
 // This function is called when the thread exits
 VOID ThreadFini(THREADID tid, const CONTEXT *ctxt, INT32 code, VOID *v)
 {
-	*out << "Count[" << decstr(tid) << "] = finished" << endl;
-	// dynamic counts for one thread and for each function of that thread.
-//
-//	thread_data_t* tdata = get_tls(tid);
-//
-//
-//	// Need to lock here because we might be resize (and thus reallocing)
-//	// the statsList when we do a push_back in the instrumentation.
-//	PIN_GetLock(&locks.bbl_list_lock,tid+2);
-//
-//
-//	UINT32 limit = tdata->size();
-//	if ( limit  > statsList.size() )
-//		limit = statsList.size();
-//
-//	for(UINT32 i=0;i< limit ; i++)
-//	{
-//		COUNTER bcount = tdata->block_counts[i];
-//		BBLSTATS* b = statsList[i];
-//		/* the last test below is for when new bbl's get jitted while we
-//		 * are emitting stats */
-//		if (b && b->_stats)
-//			for (const stat_index_t* stats = b->_stats; *stats; stats++) {
-//				tdata->cstats.unpredicated[*stats] += bcount;
-//			}
-//	}
-//	PIN_ReleaseLock(&locks.bbl_list_lock);
-//	// emit the "normal" dynamic stats
-//	*out << "# EMIT_DYNAMIC_STATS FOR TID " << tid << " EMIT #" << endl;
-//	DumpStats(*out, tdata->cstats, KnobProfilePredicated, "$dynamic-counts",tid);
-//	*out << "# END_DYNAMIC_STATS" <<  endl;
+	*out << "#Thread[" << decstr(tid) << "] = finished" << endl;
 
 }
 /* ===================================================================== */
@@ -871,11 +900,13 @@ VOID Fini(int, VOID * v) // only runs once for the application
 	traceEnabled=false;
     PIN_WaitForThreadTermination(printTraceThreadId, PIN_INFINITE_TIMEOUT, NULL);
     updateStats();
-	*out << "# FINI: end of program" << endl;
-    *out << "# EMIT_FINAL_DYNAMIC_STATS"  << endl;
-	DumpStats(*out, GlobalStatsDynamic, KnobProfilePredicated, "$dynamic-counts",0);
-	*out << "# END_FINAL_DYNAMIC_STATS" <<  endl;
- 	out->close();
+//	*out << "# FINI: end of program" << endl;
+//    *out << "# EMIT_FINAL_DYNAMIC_STATS"  << endl;
+//	DumpStats(*out, GlobalStatsDynamic, KnobProfilePredicated, "$dynamic-counts",0);
+//	*out << "# END_FINAL_DYNAMIC_STATS" <<  endl;
+
+	PrintStatsToCSV(*out, get_timestamp() ,GlobalStatsDynamic, KnobProfilePredicated);
+    out->close();
 }
 
 /* ===================================================================== */

@@ -501,50 +501,36 @@ VOID zero_stats(THREADID tid)
 
 /* ===================================================================== */
 
+//TODO: Make this function compatible with accurate analysis
 VOID updateStats()
 {
-//	thread_data_t* tdata;
-//
-//	GlobalStatsDynamic.clear();
-//	for(UINT32 tid=0; t < numThreads; tid++ )
-//	{
-//		tdata = get_tls(tid);
-//
-//		PIN_GetLock(&locks.bbl_list_lock,tid+2);
-//		UINT32 limit = tdata->size();
-//		if ( limit  > statsList.size() )
-//			limit = statsList.size();
-//
-//		for(UINT32 i=0;i< limit ; i++)
-//		{
-//			COUNTER bcount = tdata->block_counts[i];
-//			BBLSTATS* b = statsList[i];
-//			/* the last test below is for when new bbl's get jitted while we
-//			 * are emitting stats */
-//			if (b && b->_stats)
-//				for (const stat_index_t* stats = b->_stats; *stats; stats++) {
-//					GlobalStatsDynamic.unpredicated[*stats] += bcount;
-//				}
-//		}
-//		PIN_ReleaseLock(&locks.bbl_list_lock);
-//
-//
-//	}
-}
+	thread_data_t* tdata;
 
-/* ===================================================================== */
-VOID printTrace(VOID * arg)
-{
-
-	while(true)
+	GlobalStatsDynamic.clear();
+	for(UINT32 tid=0; tid < numThreads; tid++ )
 	{
-		PIN_Sleep(timeInterval);
+		tdata = get_tls(tid);
 
+		PIN_GetLock(&locks.bbl_list_lock,tid+2);
+		UINT32 limit = tdata->size();
+		if ( limit  > statsList.size() )
+			limit = statsList.size();
 
-		*out << "Waited 1 second = " << get_timestamp() << endl;
+		for(UINT32 i=0;i< limit ; i++)
+		{
+			COUNTER bcount = tdata->block_counts[i];
+			BBLSTATS* b = statsList[i];
+			/* the last test below is for when new bbl's get jitted while we
+			 * are emitting stats */
+			if (b && b->_stats)
+				for (const stat_index_t* stats = b->_stats; *stats; stats++) {
+					GlobalStatsDynamic.unpredicated[*stats] += bcount;
+				}
+		}
+		PIN_ReleaseLock(&locks.bbl_list_lock);
+
 
 	}
-
 }
 /* ===================================================================== */
 VOID DumpStats(ofstream& out,
@@ -628,6 +614,26 @@ VOID DumpStats(ofstream& out,
 }
 
 /* ===================================================================== */
+VOID printTrace(VOID * arg)
+{
+
+	while(true)
+	{
+		PIN_Sleep(timeInterval);
+		updateStats();
+		// emit the dynamic stats
+		*out << "# EMIT_DYNAMIC_STATS"  << endl;
+		DumpStats(*out, GlobalStatsDynamic, KnobProfilePredicated, "$dynamic-counts",0);
+		*out << "# END_DYNAMIC_STATS" <<  endl;
+
+
+		*out << "Waited 1 second = " << get_timestamp() << endl;
+
+	}
+
+}
+/* ===================================================================== */
+
 
 VOID emit_static_stats()
 {
@@ -734,35 +740,35 @@ VOID ThreadFini(THREADID tid, const CONTEXT *ctxt, INT32 code, VOID *v)
 {
 	*out << "Count[" << decstr(tid) << "] = finished" << endl;
 	// dynamic counts for one thread and for each function of that thread.
-
-	thread_data_t* tdata = get_tls(tid);
-
-
-	// Need to lock here because we might be resize (and thus reallocing)
-	// the statsList when we do a push_back in the instrumentation.
-	PIN_GetLock(&locks.bbl_list_lock,tid+2);
-
-
-	UINT32 limit = tdata->size();
-	if ( limit  > statsList.size() )
-		limit = statsList.size();
-
-	for(UINT32 i=0;i< limit ; i++)
-	{
-		COUNTER bcount = tdata->block_counts[i];
-		BBLSTATS* b = statsList[i];
-		/* the last test below is for when new bbl's get jitted while we
-		 * are emitting stats */
-		if (b && b->_stats)
-			for (const stat_index_t* stats = b->_stats; *stats; stats++) {
-				tdata->cstats.unpredicated[*stats] += bcount;
-			}
-	}
-	PIN_ReleaseLock(&locks.bbl_list_lock);
-	// emit the "normal" dynamic stats
-	*out << "# EMIT_DYNAMIC_STATS FOR TID " << tid << " EMIT #" << endl;
-	DumpStats(*out, tdata->cstats, KnobProfilePredicated, "$dynamic-counts",tid);
-	*out << "# END_DYNAMIC_STATS" <<  endl;
+//
+//	thread_data_t* tdata = get_tls(tid);
+//
+//
+//	// Need to lock here because we might be resize (and thus reallocing)
+//	// the statsList when we do a push_back in the instrumentation.
+//	PIN_GetLock(&locks.bbl_list_lock,tid+2);
+//
+//
+//	UINT32 limit = tdata->size();
+//	if ( limit  > statsList.size() )
+//		limit = statsList.size();
+//
+//	for(UINT32 i=0;i< limit ; i++)
+//	{
+//		COUNTER bcount = tdata->block_counts[i];
+//		BBLSTATS* b = statsList[i];
+//		/* the last test below is for when new bbl's get jitted while we
+//		 * are emitting stats */
+//		if (b && b->_stats)
+//			for (const stat_index_t* stats = b->_stats; *stats; stats++) {
+//				tdata->cstats.unpredicated[*stats] += bcount;
+//			}
+//	}
+//	PIN_ReleaseLock(&locks.bbl_list_lock);
+//	// emit the "normal" dynamic stats
+//	*out << "# EMIT_DYNAMIC_STATS FOR TID " << tid << " EMIT #" << endl;
+//	DumpStats(*out, tdata->cstats, KnobProfilePredicated, "$dynamic-counts",tid);
+//	*out << "# END_DYNAMIC_STATS" <<  endl;
 
 }
 /* ===================================================================== */
@@ -863,9 +869,9 @@ VOID Trace(TRACE trace, VOID *v)
 VOID Fini(int, VOID * v) // only runs once for the application
 {
 	*out << "# FINI: end of program" << endl;
-	emit_static_stats();
-	combine_dynamic_stats(numThreads);
-
+//	emit_static_stats();
+//	combine_dynamic_stats(numThreads);
+	printTrace(0);
 	out->close();
 }
 

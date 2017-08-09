@@ -210,11 +210,12 @@ static std::ofstream* out;
 CSTATS GlobalStatsStatic;  // summary stats for static analysis
 CSTATS GlobalStatsDynamic; // summary stats for dynamic analysis
 LOCALVAR vector<BBLSTATS*> statsList;
-THREADID intTid;
+THREADID printTraceThreadId;
 UINT32 maxThreads;
 UINT32 numThreads=0;
 UINT32 timeInterval;
 thread_data_t* threadDataArray;
+BOOL traceEnabled=true;
 
 
 /* ===================================================================== */
@@ -614,24 +615,22 @@ VOID DumpStats(ofstream& out,
 }
 
 /* ===================================================================== */
-VOID printTrace(VOID * arg)
+VOID printTraceThread(VOID * arg)
 {
 
-	while(true)
+	while(traceEnabled)
 	{
 		PIN_Sleep(timeInterval);
 		updateStats();
+		*out << "Waited 1 second = " << get_timestamp() << endl;
 		// emit the dynamic stats
 		*out << "# EMIT_DYNAMIC_STATS"  << endl;
 		DumpStats(*out, GlobalStatsDynamic, KnobProfilePredicated, "$dynamic-counts",0);
 		*out << "# END_DYNAMIC_STATS" <<  endl;
-
-
-		*out << "Waited 1 second = " << get_timestamp() << endl;
-
 	}
 
 }
+
 /* ===================================================================== */
 
 
@@ -866,13 +865,17 @@ VOID Trace(TRACE trace, VOID *v)
 }
 /* ===================================================================== */
 
+
 VOID Fini(int, VOID * v) // only runs once for the application
 {
+	traceEnabled=false;
+    PIN_WaitForThreadTermination(printTraceThreadId, PIN_INFINITE_TIMEOUT, NULL);
+    updateStats();
 	*out << "# FINI: end of program" << endl;
-//	emit_static_stats();
-//	combine_dynamic_stats(numThreads);
-	printTrace(0);
-	out->close();
+    *out << "# EMIT_FINAL_DYNAMIC_STATS"  << endl;
+	DumpStats(*out, GlobalStatsDynamic, KnobProfilePredicated, "$dynamic-counts",0);
+	*out << "# END_FINAL_DYNAMIC_STATS" <<  endl;
+ 	out->close();
 }
 
 /* ===================================================================== */
@@ -977,8 +980,8 @@ int main(int argc, CHAR **argv)
 	if( !KnobProfileDynamicOnly.Value() )
 		IMG_AddInstrumentFunction(Image, 0);
 
-	intTid = PIN_SpawnInternalThread(printTrace, NULL, 0, NULL);
-	ASSERT(intTid != INVALID_THREADID, "Fail to spawn internal print thread");
+	printTraceThreadId = PIN_SpawnInternalThread(printTraceThread, NULL, 0, NULL);
+	ASSERT(printTraceThreadId != INVALID_THREADID, "Fail to spawn internal print thread");
 
 	PIN_StartProgram();    // Never returns
 	return 0;

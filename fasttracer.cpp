@@ -511,14 +511,15 @@ VOID updateGlobalStats() {
 * this is important for the size of read/write memory fields
 */
 //
-VOID PrintCSVHeader(ofstream& out, CSTATS& stats)
+VOID PrintCSVHeader(ofstream& out, CSTATS *stats)
 {
 
 	PIN_GetLock(&locks.lock, 0); // for output
 	out << "!Timestamp;";
-	for(UINT indx = 0; indx < stats.total_size; indx++){
+	for(UINT indx = 0; indx < stats->total_size; indx++){
 		out << IndexToString(indx) << ";";
 	}
+	out <<endl;
 	PIN_ReleaseLock(&locks.lock);
 
 }
@@ -533,6 +534,7 @@ VOID PrintStatsToCSV(ofstream& out, UINT64 timestamp, CSTATS *stats,
 	for(UINT indx = 0; indx < stats->total_size; indx++){
 		out << statss[indx]  << ";";
 	}
+	out << endl;
 	PIN_ReleaseLock(&locks.lock);
 }
 
@@ -779,6 +781,7 @@ int main(int argc, CHAR **argv) {
 	if (!KnobProfileDynamicOnly.Value())
 		IMG_AddInstrumentFunction(Image, 0);
 
+	PrintCSVHeader(*out,GlobalStatsDynamic);
 	printTraceThreadId = PIN_SpawnInternalThread(printTraceThread, NULL, 0,
 			NULL);
 	ASSERT(printTraceThreadId != INVALID_THREADID,

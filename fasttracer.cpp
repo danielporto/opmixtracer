@@ -109,7 +109,6 @@ INT32 Usage() {
 /* ===================================================================== */
 typedef enum {
 	INDEX_SPECIAL,
-	INDEX_TOTAL,
 	INDEX_MEM_ATOMIC,
 	INDEX_STACK_READ,
 	INDEX_STACK_WRITE,
@@ -117,6 +116,7 @@ typedef enum {
 	INDEX_IPREL_WRITE,
 	INDEX_MEM_READ,
 	INDEX_MEM_WRITE,
+	INDEX_TOTAL,
 	INDEX_SPECIAL_END
 } index_t;
 
@@ -190,7 +190,7 @@ public:
 			break;
 
 		}
-		total_size = base_size + sizeof(index_t);
+		total_size = base_size + INDEX_SPECIAL_END;
 		unpredicated = new COUNTER[total_size];
 		predicated_true = new COUNTER[total_size];
 		clear();
@@ -322,26 +322,27 @@ LOCALFUN UINT32 IndexStringLength(BBL bbl, BOOL memory_access_profile) {
 		count++; // one for the ins
 
 		if (memory_access_profile) {
-			if (INS_IsMemoryRead(ins))
-				count++;   // for size
-
+			if (INS_IsAtomicUpdate(ins))
+				count++;
+			
 			if (INS_IsStackRead(ins))
+				count++;
+
+			if (INS_IsStackWrite(ins))
 				count++;
 
 			if (INS_IsIpRelRead(ins))
 				count++;
 
-			if (INS_IsMemoryWrite(ins))
-				count++; // for size
-
-			if (INS_IsStackWrite(ins))
-				count++;
-
 			if (INS_IsIpRelWrite(ins))
 				count++;
 
-			if (INS_IsAtomicUpdate(ins))
-				count++;
+			if (INS_IsMemoryRead(ins))
+				count++;   
+
+			if (INS_IsMemoryWrite(ins))
+				count++; 
+			
 		}
 	}
 
@@ -357,23 +358,27 @@ LOCALFUN stat_index_t* INS_GenerateIndexString(INS ins, stat_index_t *stats,
 	if (memory_access_profile) {
 		const UINT32 SPECIAL_INDEX = GetSpecialIndex();
 
-		if (INS_IsMemoryRead(ins))
-			*stats++ =  	SPECIAL_INDEX + INDEX_MEM_READ;
-		if (INS_IsMemoryWrite(ins))
-			*stats++ = SPECIAL_INDEX +INDEX_MEM_WRITE;
-
 		if (INS_IsAtomicUpdate(ins))
 			*stats++ = SPECIAL_INDEX + INDEX_MEM_ATOMIC;
 
 		if (INS_IsStackRead(ins))
 			*stats++ = SPECIAL_INDEX +INDEX_STACK_READ;
+
 		if (INS_IsStackWrite(ins))
 			*stats++ = SPECIAL_INDEX +INDEX_STACK_WRITE;
 
 		if (INS_IsIpRelRead(ins))
 			*stats++ = SPECIAL_INDEX +INDEX_IPREL_READ;
+
 		if (INS_IsIpRelWrite(ins))
 			*stats++ = SPECIAL_INDEX +INDEX_IPREL_WRITE;
+
+		if (INS_IsMemoryRead(ins))
+			*stats++ =  	SPECIAL_INDEX + INDEX_MEM_READ;
+
+		if (INS_IsMemoryWrite(ins))
+			*stats++ = SPECIAL_INDEX +INDEX_MEM_WRITE;
+
 	}
 	return stats;
 }
@@ -383,9 +388,9 @@ LOCALFUN stat_index_t* INS_GenerateIndexString(INS ins, stat_index_t *stats,
 LOCALFUN string IndexToString(UINT32 index) {
 
 	const UINT32 SPECIAL_INDEX = GetSpecialIndex();
-	if ( index > SPECIAL_INDEX ) {
-		if (index == SPECIAL_INDEX + INDEX_TOTAL)
-			return "*total";
+	if ( index >= SPECIAL_INDEX ) {
+		if (index == SPECIAL_INDEX )
+			return "*SPECIAL";
 		else if (index == SPECIAL_INDEX + INDEX_MEM_READ)
 			return "*mem-read";
 		else if (index == SPECIAL_INDEX + INDEX_MEM_WRITE)
@@ -400,6 +405,10 @@ LOCALFUN string IndexToString(UINT32 index) {
 			return "*iprel-read";
 		else if (index == SPECIAL_INDEX +INDEX_IPREL_WRITE)
 			return "*iprel-write";
+		else if (index == SPECIAL_INDEX + INDEX_TOTAL)
+			return "*total";
+		else if (index == SPECIAL_INDEX +INDEX_SPECIAL_END)
+		return "*SPECIAL_END";
 	}
 
 	if (measurement == measure_opcode)
@@ -496,6 +505,7 @@ VOID updateGlobalStats() {
 			if (b && b->_stats)
 				for (const stat_index_t* stats = b->_stats; *stats; stats++) {
 					GlobalStatsDynamic->unpredicated[*stats] += bcount;
+					GlobalStatsDynamic->unpredicated[GlobalStatsDynamic->base_size+INDEX_TOTAL]+= bcount;
 				}
 		}
 		PIN_ReleaseLock(&locks.bbl_list_lock);

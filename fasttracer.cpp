@@ -59,13 +59,13 @@ KNOB_COMMENT tracer_knob_family("pintool:tracer", "Tracer knobs");
 
 KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE, "pintool:tracer", "o",
 		"fasttracer.out", "specify profile file name");
-KNOB<BOOL> KnobPid(KNOB_MODE_WRITEONCE, "pintool:tracer", "i", "1",
+KNOB<BOOL> KnobPid(KNOB_MODE_WRITEONCE, "pintool:tracer", "pid", "1",
 		"append pid to output file name");
-KNOB<BOOL> KnobProfilePredicated(KNOB_MODE_WRITEONCE, "pintool:tracer", "p",
+KNOB<BOOL> KnobProfilePredicated(KNOB_MODE_WRITEONCE, "pintool:tracer", "accurate",
 		"0", "enable accurate profiling for predicated instructions");
-KNOB<BOOL> KnobProfileStaticOnly(KNOB_MODE_WRITEONCE, "pintool:tracer", "s",
+KNOB<BOOL> KnobProfileStaticOnly(KNOB_MODE_WRITEONCE, "pintool:tracer", "static",
 		"0", "terminate after collection of static profile for main image");
-KNOB<BOOL> KnobProfileMemory(KNOB_MODE_WRITEONCE, "pintool:tracer", "m",
+KNOB<BOOL> KnobProfileMemory(KNOB_MODE_WRITEONCE, "pintool:tracer", "memory",
 		"1", "terminate after collection of static profile for main image");
 KNOB<BOOL> KnobNoSharedLibs(KNOB_MODE_WRITEONCE, "pintool:tracer",
 		"no_shared_libs", "0", "do not instrument shared libraries");
@@ -492,8 +492,7 @@ VOID PrintCSVHeader(ofstream& out, DATACOUNTERS *stats)
 
 }
 
-VOID PrintStatsToCSV(ofstream& out, UINT64 timestamp, DATACOUNTERS *stats,
-		BOOL predicated_true) 
+VOID PrintStatsToCSV(ofstream& out, UINT64 timestamp, DATACOUNTERS *stats) 
 {
 
 	PIN_GetLock(&locks.lock, 0); // for output
@@ -513,8 +512,7 @@ VOID printTraceThread(VOID * arg)
 	while (printThreadEnabled) {
 		PIN_Sleep(timeInterval);
 		updateGlobalStats();
-		PrintStatsToCSV(*out, get_timestamp(), GlobalStatsUnpredicated,
-				KnobProfilePredicated);
+		PrintStatsToCSV(*out, get_timestamp(), GlobalStatsUnpredicated);
 
 	}
 
@@ -667,12 +665,20 @@ VOID Trace(TRACE trace, VOID *v)
 
 VOID Fini(int, VOID * v) // only runs once for the application
 {
-	printThreadEnabled = false;
-	PIN_WaitForThreadTermination(printTraceThreadId, PIN_INFINITE_TIMEOUT,
-			NULL);
-	updateGlobalStats();
-	PrintStatsToCSV(*out, get_timestamp(), GlobalStatsUnpredicated,
-			KnobProfilePredicated);
+	if(!KnobProfileStaticOnly.Value())
+	{
+		printThreadEnabled = false;
+		PIN_WaitForThreadTermination(printTraceThreadId, PIN_INFINITE_TIMEOUT,
+				NULL);
+		updateGlobalStats();
+		PrintStatsToCSV(*out, get_timestamp(), GlobalStatsUnpredicated);
+	}
+	else
+	{
+
+		PrintStatsToCSV(*out, 0L, GlobalStatsUnpredicated);
+		PrintStatsToCSV(*out, 0L, GlobalStatsPredicated);
+	}
 	out->close();
 }
 
@@ -696,13 +702,16 @@ VOID Image(IMG img, VOID * v)
 
 				if (INS_IsPredicated(ins)) {
 					for (stat_index_t *start = array; start < end; start++) {
-						GlobalStatsPredicated->bucket
-				[*start]++;
+						GlobalStatsPredicated->bucket[*start]++;
+						if (*start <=  GlobalStatsPredicated->base_size)		
+						GlobalStatsPredicated->bucket[GlobalStatsPredicated->index_total]+= 1;
+
 					}
 				} else {
 					for (stat_index_t *start = array; start < end; start++) {
-						GlobalStatsUnpredicated->bucket
-				[*start]++;
+						GlobalStatsUnpredicated->bucket[*start]++;
+						if (*start <=  GlobalStatsUnpredicated->base_size)		
+						GlobalStatsUnpredicated->bucket[GlobalStatsUnpredicated->index_total]+= 1;
 					}
 				}
 			}
@@ -755,25 +764,30 @@ int main(int argc, CHAR **argv)
 		threadDataArray[i].datacounters = new DATACOUNTERS(measurement);
 
 	}
-	GlobalStatsPredicated = new DATACOUNTERS(measurement);
 	GlobalStatsUnpredicated = new DATACOUNTERS(measurement);
 
 	PIN_InitLock(&locks.lock);
 	PIN_InitLock(&locks.bbl_list_lock);
 
+	PrintCSVHeader(*out,GlobalStatsUnpredicated);
+
 	// obtain  a key for TLS storage
 	tls_key = PIN_CreateThreadDataKey(0);
-
-
-	TRACE_AddInstrumentFunction(Trace, 0);
 	PIN_AddThreadStartFunction(ThreadStart, 0);
 	PIN_AddThreadFiniFunction(ThreadFini, NULL);
-	PIN_AddFiniFunction(Fini, 0);
 
-	if (!KnobProfileDynamicOnly.Value())
+
+	
+	if (KnobProfileStaticOnly.Value()){
+		//static analysis require two buckets
+		GlobalStatsPredicated = new DATACOUNTERS(measurement); 
 		IMG_AddInstrumentFunction(Image, 0);
+	}else{
+		TRACE_AddInstrumentFunction(Trace, 0);
+		PIN_AddFiniFunction(Fini, 0);
+	
+	}
 
-	PrintCSVHeader(*out,GlobalStatsUnpredicated);
 	printTraceThreadId = PIN_SpawnInternalThread(printTraceThread, NULL, 0,
 			NULL);
 	ASSERT(printTraceThreadId != INVALID_THREADID,

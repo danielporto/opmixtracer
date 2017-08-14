@@ -68,7 +68,7 @@ KNOB<BOOL> KnobProfilePredicated(KNOB_MODE_WRITEONCE, "pintool:tracer", "p",
 KNOB<BOOL> KnobProfileStaticOnly(KNOB_MODE_WRITEONCE, "pintool:tracer", "s",
 		"0", "terminate after collection of static profile for main image");
 KNOB<BOOL> KnobProfileMemory(KNOB_MODE_WRITEONCE, "pintool:tracer", "m",
-		"0", "terminate after collection of static profile for main image");
+		"1", "terminate after collection of static profile for main image");
 KNOB<BOOL> KnobNoSharedLibs(KNOB_MODE_WRITEONCE, "pintool:tracer",
 		"no_shared_libs", "0", "do not instrument shared libraries");
 KNOB<BOOL> KnobInstructionLengthTracer(KNOB_MODE_WRITEONCE, "pintool:tracer",
@@ -193,7 +193,7 @@ public:
 		total_size = base_size + INDEX_SPECIAL_END;
 		unpredicated = new COUNTER[total_size];
 		predicated_true = new COUNTER[total_size];
-		clear();
+		clear();		
 	}
 
 	~CSTATS(){
@@ -213,6 +213,10 @@ public:
 			unpredicated[i] = 0;
 		for (UINT32 i = 0; i < total_size; i++)
 			predicated_true[i] = 0;
+
+		unpredicated[base_size+INDEX_SPECIAL]=999999999999;
+		predicated_true[base_size+INDEX_SPECIAL]=999999999999;
+	
 	}
 
 
@@ -356,28 +360,21 @@ LOCALFUN stat_index_t* INS_GenerateIndexString(INS ins, stat_index_t *stats,
 	*stats++ = INS_GetIndex(ins);
 
 	if (memory_access_profile) {
-		const UINT32 SPECIAL_INDEX = GetSpecialIndex();
+		const UINT32 special_index = GetSpecialIndex();
 
-		if (INS_IsAtomicUpdate(ins))
-			*stats++ = SPECIAL_INDEX + INDEX_MEM_ATOMIC;
+		if (INS_IsAtomicUpdate(ins)) 	*stats++ = special_index + INDEX_MEM_ATOMIC;
 
-		if (INS_IsStackRead(ins))
-			*stats++ = SPECIAL_INDEX +INDEX_STACK_READ;
+		if (INS_IsStackRead(ins))	*stats++ = special_index +INDEX_STACK_READ;
 
-		if (INS_IsStackWrite(ins))
-			*stats++ = SPECIAL_INDEX +INDEX_STACK_WRITE;
+		if (INS_IsStackWrite(ins))	*stats++ = special_index +INDEX_STACK_WRITE;
 
-		if (INS_IsIpRelRead(ins))
-			*stats++ = SPECIAL_INDEX +INDEX_IPREL_READ;
+		if (INS_IsIpRelRead(ins))	*stats++ = special_index +INDEX_IPREL_READ;
 
-		if (INS_IsIpRelWrite(ins))
-			*stats++ = SPECIAL_INDEX +INDEX_IPREL_WRITE;
+		if (INS_IsIpRelWrite(ins))	*stats++ = special_index +INDEX_IPREL_WRITE;
 
-		if (INS_IsMemoryRead(ins))
-			*stats++ =  	SPECIAL_INDEX + INDEX_MEM_READ;
+		if (INS_IsMemoryRead(ins))	*stats++ = special_index + INDEX_MEM_READ;
 
-		if (INS_IsMemoryWrite(ins))
-			*stats++ = SPECIAL_INDEX +INDEX_MEM_WRITE;
+		if (INS_IsMemoryWrite(ins))	*stats++ = special_index +INDEX_MEM_WRITE;
 
 	}
 	return stats;
@@ -389,36 +386,22 @@ LOCALFUN string IndexToString(UINT32 index) {
 
 	const UINT32 SPECIAL_INDEX = GetSpecialIndex();
 	if ( index >= SPECIAL_INDEX ) {
-		if (index == SPECIAL_INDEX )
-			return "*SPECIAL";
-		else if (index == SPECIAL_INDEX + INDEX_MEM_READ)
-			return "*mem-read";
-		else if (index == SPECIAL_INDEX + INDEX_MEM_WRITE)
-			return "*mem-write";
-		else if (index == SPECIAL_INDEX + INDEX_MEM_ATOMIC)
-			return "*mem-atomic";
-		else if (index == SPECIAL_INDEX + INDEX_STACK_READ)
-			return "*stack-read";
-		else if (index == SPECIAL_INDEX +INDEX_STACK_WRITE)
-			return "*stack-write";
-		else if (index == SPECIAL_INDEX +INDEX_IPREL_READ)
-			return "*iprel-read";
-		else if (index == SPECIAL_INDEX +INDEX_IPREL_WRITE)
-			return "*iprel-write";
-		else if (index == SPECIAL_INDEX + INDEX_TOTAL)
-			return "*total";
-		else if (index == SPECIAL_INDEX +INDEX_SPECIAL_END)
-		return "*SPECIAL_END";
+		if (index == SPECIAL_INDEX )							return "*SPECIAL";
+		else if (index == SPECIAL_INDEX + INDEX_MEM_ATOMIC)		return "*mem-atomic";
+		else if (index == SPECIAL_INDEX + INDEX_STACK_READ)		return "*stack-read";
+		else if (index == SPECIAL_INDEX + INDEX_STACK_WRITE)	return "*stack-write";
+		else if (index == SPECIAL_INDEX + INDEX_IPREL_READ)		return "*iprel-read";
+		else if (index == SPECIAL_INDEX + INDEX_IPREL_WRITE)	return "*iprel-write";
+		else if (index == SPECIAL_INDEX + INDEX_MEM_READ)		return "*mem-read";
+		else if (index == SPECIAL_INDEX + INDEX_MEM_WRITE)		return "*mem-write";
+		else if (index == SPECIAL_INDEX + INDEX_TOTAL)			return "*total";
+		else if (index == SPECIAL_INDEX + INDEX_SPECIAL_END)	return "*SPECIAL_END";
 	}
 
-	if (measurement == measure_opcode)
-		return OPCODE_StringShort(index);
-	if (measurement ==  measure_category)
-		return CATEGORY_StringShort(index);
-	if(measurement == measure_extension)
-		return EXTENSION_StringShort(index);
-	if( measurement == measure_iform)
-		return xed_iform_enum_t2str(static_cast<xed_iform_enum_t>(index));
+	if (measurement == measure_opcode)		return OPCODE_StringShort(index);
+	if (measurement ==  measure_category)	return CATEGORY_StringShort(index);
+	if (measurement == measure_extension)	return EXTENSION_StringShort(index);
+	if( measurement == measure_iform)		return xed_iform_enum_t2str(static_cast<xed_iform_enum_t>(index));
 	if (measurement == measure_ilen){
 		ostringstream s;
 		s << "ILEN-" << index;
@@ -505,7 +488,8 @@ VOID updateGlobalStats() {
 			if (b && b->_stats)
 				for (const stat_index_t* stats = b->_stats; *stats; stats++) {
 					GlobalStatsDynamic->unpredicated[*stats] += bcount;
-					GlobalStatsDynamic->unpredicated[GlobalStatsDynamic->base_size+INDEX_TOTAL]+= bcount;
+					if (*stats <=  GlobalStatsDynamic->base_size)		
+						GlobalStatsDynamic->unpredicated[GlobalStatsDynamic->base_size+INDEX_TOTAL]+= bcount;
 				}
 		}
 		PIN_ReleaseLock(&locks.bbl_list_lock);
@@ -669,6 +653,21 @@ VOID Trace(TRACE trace, VOID *v) {
 		*curr++ = 0;
 		ASSERTX(curr == stats_end);
 
+		// PIN_GetLock(&locks.lock, 0); // for output		
+		// *out << "BBL:"<<block_start_pc << ";";
+		// for(UINT32 a=0;a<n+1;a++){
+		// 	*out<<curr[a] <<";";
+		// }
+		// *out << endl;
+	
+		// *out << "BBL:"<<block_start_pc << ";";
+		// for(UINT32 a=0;a<n+1;a++){
+		// 	*out<<IndexToString(curr[a]) <<";";
+		// }
+
+		// *out << endl;
+		// PIN_ReleaseLock(&locks.lock);
+		
 		// Insert instrumentation to count the number of times the bbl is executed
 		BBLSTATS * bblstats = new BBLSTATS(stats, block_start_pc, ninsts,
 				pc - block_start_pc);

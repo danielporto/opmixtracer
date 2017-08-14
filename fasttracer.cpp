@@ -304,6 +304,8 @@ LOCALFUN UINT32 INS_GetIndex(INS ins)
 			break;
 		case measure_ilen:
 			index = INS_Size(ins);
+			if(index>=BUCKET_MAX_LEN_CODES)
+			return BUCKET_MAX_LEN_CODES-1;
 			break;
 		case measure_category:
 			index = INS_Category(ins);

@@ -77,16 +77,9 @@ KNOB<BOOL> KnobExtensionTracer(KNOB_MODE_WRITEONCE, "pintool:tracer", "extension
 		"0", "Compute ISA category tracer");
 KNOB<BOOL> KnobIformTracer(KNOB_MODE_WRITEONCE, "pintool:tracer", "iform", "0",
 		"Compute ISA iform tracer");
-#ifndef TARGET_WINDOWS
-KNOB<BOOL> KnobProfileDynamicOnly(KNOB_MODE_WRITEONCE, "pintool:tracer", "d",
-		"0", "Only collect dynamic profile");
-#else
-KNOB<BOOL> KnobProfileDynamicOnly(KNOB_MODE_WRITEONCE,
-		"pintool:tracer", "d", "1", "Only collect dynamic profile");
-#endif
-KNOB<UINT32> KnobTimer(KNOB_MODE_WRITEONCE, "pintool:tracer", "c", "1000",
-		"specify the time interval");
-KNOB<UINT32> KnobThreads(KNOB_MODE_WRITEONCE, "pintool:tracer", "t", "100",
+KNOB<UINT32> KnobTimer(KNOB_MODE_WRITEONCE, "pintool:tracer", "c", "999",
+		"specify the time interval"); //sleep wakes up after 999ms, ~1s
+KNOB<UINT32> KnobThreads(KNOB_MODE_WRITEONCE, "pintool:tracer", "t", "40",
 		"specify the time interval");
 
 /* ===================================================================== */
@@ -96,8 +89,8 @@ INT32 Usage() {
 			<< "instruction form, instruction length, extension or category tracer profile\n\n";
 	cerr << KNOB_BASE::StringKnobSummary();
 	cerr << endl;
-	cerr << "The default is to do opcode and ISA extension profiling" << endl;
-	cerr << "At most one of -iform, -ilen or  -category is allowed" << endl;
+	cerr << "The default is to do opcode profiling" << endl;
+	cerr << "At most one of -extension, -category, -iform or -ilen is allowed" << endl;
 	cerr << endl;
 	return -1;
 }
@@ -245,13 +238,15 @@ class THREAD_DATA
 			datacounters=NULL;
 		}
 		
-		UINT32 size() {
+		UINT32 size() 
+		{
 			UINT32 limit;
 			limit = block_counts.size();
 			return limit;
 		}
 
-		void resize(UINT32 n) {
+		void resize(UINT32 n) 
+		{
 			if (size() < n)
 				block_counts.resize(2 * n);
 		}
@@ -265,10 +260,8 @@ locks_t locks;
 measurement_t measurement = measure_opcode;
 static TLS_KEY tls_key;
 static std::ofstream* out;
-DATACOUNTERS
- *GlobalStatsPredicated;  // only static analysis use both Globals
-DATACOUNTERS
- *GlobalStatsUnpredicated;
+DATACOUNTERS *GlobalStatsPredicated;  // only static analysis use both Globals
+DATACOUNTERS *GlobalStatsUnpredicated;
 LOCALVAR vector<BBLSTATS*> statsList;
 THREADID printTraceThreadId;
 UINT32 maxThreads;
@@ -556,7 +549,7 @@ VOID ThreadStart(THREADID tid, CONTEXT *ctxt, INT32 flags, VOID *v)
 	numThreads++;
 	if (numThreads > maxThreads) {
 		*out
-				<< "Max thread number has been reached, aborting!! increase the number of threads!!"
+				<< "Max thread number ["<<maxThreads<<"] has been reached, aborting!! increase the number of threads with '-t'"
 				<< endl;
 		exit(0);
 	}

@@ -43,24 +43,22 @@
 
 #include <iostream>
 #include <sstream>
-#include <iomanip>
 #include <fstream>
-#include <utility> /* for pair */
 #include <vector>
-#include <unistd.h>
+#include <unistd.h> //for getPid()
 #include "pin.H"
-
 extern "C" {
 #include "xed-interface.h"
 }
-#include "utils.h"
+#include "utils.h" //gettimestamp
 
 /* ===================================================================== */
 /* Commandline Switches */
 /* ===================================================================== */
 KNOB_COMMENT tracer_knob_family("pintool:tracer", "Tracer knobs");
+
 KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE, "pintool:tracer", "o",
-		"out.tracer", "specify profile file name");
+		"fasttracer.out", "specify profile file name");
 KNOB<BOOL> KnobPid(KNOB_MODE_WRITEONCE, "pintool:tracer", "i", "1",
 		"append pid to output file name");
 KNOB<BOOL> KnobProfilePredicated(KNOB_MODE_WRITEONCE, "pintool:tracer", "p",
@@ -107,7 +105,8 @@ INT32 Usage() {
 /* ===================================================================== */
 /* INDEX HELPERS */
 /* ===================================================================== */
-typedef enum {
+typedef enum 
+{
 	INDEX_SPECIAL,
 	INDEX_MEM_ATOMIC,
 	INDEX_STACK_READ,
@@ -129,7 +128,8 @@ const UINT32 BUCKET_MAX_EXTENSION_CODES = 58; // extras/xed-intel64/include/xed/
 /*Types*/
 /* ===================================================================== */
 
-typedef enum {
+typedef enum 
+{
 	measure_opcode = 0,
 	measure_category = 1,
 	measure_ilen = 2,
@@ -151,7 +151,8 @@ typedef UINT64 COUNTER;
 # define ALIGN_LOCK __declspec(align(64))
 #endif
 
-typedef struct {
+typedef struct 
+{
 	char pad0[64];
 	PIN_LOCK ALIGN_LOCK lock; /* for mediating output */
 	char pad1[64];
@@ -160,103 +161,100 @@ typedef struct {
 
 /* ===================================================================== */
 
-class CSTATS {
-public:
-	CSTATS()
-	{
-		total_size=0;
-		base_size=0;
-		unpredicated = NULL;
-		predicated_true = NULL;
-	}
+class DATACOUNTERS
+{
+	public:
+		COUNTER *bucket;
+		UINT32 base_size;
+		UINT32 total_size;
+		UINT32 index_total;
 
-	CSTATS(measurement_t measure)
-	{
-		switch (measure) {
-		case measure_opcode:
-			base_size = BUCKET_MAX_INSTRUCTION_CODES;
-			break;
-		case measure_category:
-			base_size = BUCKET_MAX_CATEGORY_CODES;
-			break;
-		case measure_ilen:
-			base_size = BUCKET_MAX_LEN_CODES;
-			break;
-		case measure_iform:
-			base_size = BUCKET_MAX_IFORMS_CODES;
-			break;
-		case measure_extension:
-			base_size = BUCKET_MAX_EXTENSION_CODES;
-			break;
-
+		DATACOUNTERS()
+		{
+			total_size=0;
+			base_size=0;
+			bucket = NULL;
+			index_total=0;
 		}
-		total_size = base_size + INDEX_SPECIAL_END;
-		unpredicated = new COUNTER[total_size];
-		predicated_true = new COUNTER[total_size];
-		clear();		
-	}
 
-	~CSTATS(){
-		if(total_size>0){
-			delete (unpredicated);
-			delete (predicated_true);
+		DATACOUNTERS(measurement_t measure)
+		{
+			switch (measure) {
+			case measure_opcode:
+				base_size = BUCKET_MAX_INSTRUCTION_CODES;
+				break;
+			case measure_category:
+				base_size = BUCKET_MAX_CATEGORY_CODES;
+				break;
+			case measure_ilen:
+				base_size = BUCKET_MAX_LEN_CODES;
+				break;
+			case measure_iform:
+				base_size = BUCKET_MAX_IFORMS_CODES;
+				break;
+			case measure_extension:
+				base_size = BUCKET_MAX_EXTENSION_CODES;
+				break;
+
+			}
+			total_size = base_size + INDEX_SPECIAL_END;
+			index_total = base_size + INDEX_TOTAL;
+			bucket = new COUNTER[total_size];
+			clear();		
 		}
-	}
 
-	COUNTER *unpredicated;
-	COUNTER *predicated_true;
-	UINT32 base_size;
-	UINT32 total_size;
+		~DATACOUNTERS()
+		{
+			if(total_size>0){
+				delete (bucket);
+			}
+		}
 
-	VOID clear() {
-		for (UINT32 i = 0; i < total_size; i++)
-			unpredicated[i] = 0;
-		for (UINT32 i = 0; i < total_size; i++)
-			predicated_true[i] = 0;
-
-		unpredicated[base_size+INDEX_SPECIAL]=999999999999;
-		predicated_true[base_size+INDEX_SPECIAL]=999999999999;
-	
-	}
+		VOID clear() {
+			for (UINT32 i = 0; i < total_size; i++)
+				bucket[i] = 0;
+			bucket [base_size+INDEX_SPECIAL]=999999999999;
+		}
 
 
 };
 
-class BBLSTATS {
+class BBLSTATS 
+{
 	// Our first pass sets up the types of stats we need to update for this
 	// block. We have one stat per instruction in the block. The _stats
 	// array is null terminated.
-public:
-	const stat_index_t* const _stats;
-	const ADDRINT _pc; // start PC of the block
-	const UINT32 _ninst; // # of instructions
-	const UINT32 _nbytes; // # of bytes in the block
-	BBLSTATS(stat_index_t* stats, ADDRINT pc, UINT32 ninst, UINT32 nbytes) :
-			_stats(stats), _pc(pc), _ninst(ninst), _nbytes(nbytes) {
-	}
-	;
+	public:
+		const stat_index_t* const _stats;
+		const ADDRINT _pc; // start PC of the block
+		const UINT32 _ninst; // # of instructions
+		const UINT32 _nbytes; // # of bytes in the block
+		BBLSTATS(stat_index_t* stats, ADDRINT pc, UINT32 ninst, UINT32 nbytes) :
+				_stats(stats), _pc(pc), _ninst(ninst), _nbytes(nbytes) {
+		};
 };
 
-class thread_data_t {
-public:
-	thread_data_t() {
-		cstats=NULL;
-	}
-	CSTATS *cstats;
+class THREAD_DATA 
+{
+	public:
+		DATACOUNTERS* datacounters;
+		vector<COUNTER> block_counts;
+		
+		THREAD_DATA() 
+		{
+			datacounters=NULL;
+		}
+		
+		UINT32 size() {
+			UINT32 limit;
+			limit = block_counts.size();
+			return limit;
+		}
 
-	vector<COUNTER> block_counts;
-
-	UINT32 size() {
-		UINT32 limit;
-		limit = block_counts.size();
-		return limit;
-	}
-
-	void resize(UINT32 n) {
-		if (size() < n)
-			block_counts.resize(2 * n);
-	}
-
+		void resize(UINT32 n) {
+			if (size() < n)
+				block_counts.resize(2 * n);
+		}
 };
 
 /* ===================================================================== */
@@ -267,22 +265,25 @@ locks_t locks;
 measurement_t measurement = measure_opcode;
 static TLS_KEY tls_key;
 static std::ofstream* out;
-CSTATS *GlobalStatsStatic;  // summary stats for static analysis
-CSTATS *GlobalStatsDynamic; // summary stats for dynamic analysis
+DATACOUNTERS
+ *GlobalStatsPredicated;  // only static analysis use both Globals
+DATACOUNTERS
+ *GlobalStatsUnpredicated;
 LOCALVAR vector<BBLSTATS*> statsList;
 THREADID printTraceThreadId;
 UINT32 maxThreads;
 UINT32 numThreads = 0;
 UINT32 timeInterval;
-thread_data_t* threadDataArray;
-BOOL traceEnabled = true;
+THREAD_DATA* threadDataArray;
+BOOL printThreadEnabled = true;
 
 /* ===================================================================== */
 /* index functions*/
 /* ===================================================================== */
 //
 
-LOCALFUN UINT32 GetSpecialIndex(){
+LOCALFUN UINT32 GetSpecialIndex()
+{
 	switch (measurement) {
 			case measure_opcode: return BUCKET_MAX_INSTRUCTION_CODES;
 			case measure_ilen: return BUCKET_MAX_LEN_CODES;
@@ -294,7 +295,8 @@ LOCALFUN UINT32 GetSpecialIndex(){
 }
 
 /* ===================================================================== */
-LOCALFUN UINT32 INS_GetIndex(INS ins) {
+LOCALFUN UINT32 INS_GetIndex(INS ins) 
+{
 	UINT32 index = 0;
 	switch (measurement) {
 		case measure_opcode:
@@ -319,34 +321,21 @@ LOCALFUN UINT32 INS_GetIndex(INS ins) {
 }
 /* ===================================================================== */
 
-LOCALFUN UINT32 IndexStringLength(BBL bbl, BOOL memory_access_profile) {
+LOCALFUN UINT32 IndexStringLength(BBL bbl, BOOL memory_access_profile) 
+{
 	UINT32 count = 0;
 
 	for (INS ins = BBL_InsHead(bbl); INS_Valid(ins); ins = INS_Next(ins)) {
 		count++; // one for the ins
 
 		if (memory_access_profile) {
-			if (INS_IsAtomicUpdate(ins))
-				count++;
-			
-			if (INS_IsStackRead(ins))
-				count++;
-
-			if (INS_IsStackWrite(ins))
-				count++;
-
-			if (INS_IsIpRelRead(ins))
-				count++;
-
-			if (INS_IsIpRelWrite(ins))
-				count++;
-
-			if (INS_IsMemoryRead(ins))
-				count++;   
-
-			if (INS_IsMemoryWrite(ins))
-				count++; 
-			
+			if (INS_IsAtomicUpdate(ins)) 	count++;
+			if (INS_IsStackRead(ins))		count++;
+			if (INS_IsStackWrite(ins))		count++;
+			if (INS_IsIpRelRead(ins))		count++;
+			if (INS_IsIpRelWrite(ins))		count++;
+			if (INS_IsMemoryRead(ins))		count++;
+			if (INS_IsMemoryWrite(ins))		count++;
 		}
 	}
 
@@ -356,33 +345,28 @@ LOCALFUN UINT32 IndexStringLength(BBL bbl, BOOL memory_access_profile) {
 
 /* ===================================================================== */
 LOCALFUN stat_index_t* INS_GenerateIndexString(INS ins, stat_index_t *stats,
-		BOOL memory_access_profile) {
+		BOOL memory_access_profile) 
+{
 	*stats++ = INS_GetIndex(ins);
 
 	if (memory_access_profile) {
 		const UINT32 special_index = GetSpecialIndex();
 
 		if (INS_IsAtomicUpdate(ins)) 	*stats++ = special_index + INDEX_MEM_ATOMIC;
-
 		if (INS_IsStackRead(ins))	*stats++ = special_index +INDEX_STACK_READ;
-
 		if (INS_IsStackWrite(ins))	*stats++ = special_index +INDEX_STACK_WRITE;
-
 		if (INS_IsIpRelRead(ins))	*stats++ = special_index +INDEX_IPREL_READ;
-
 		if (INS_IsIpRelWrite(ins))	*stats++ = special_index +INDEX_IPREL_WRITE;
-
 		if (INS_IsMemoryRead(ins))	*stats++ = special_index + INDEX_MEM_READ;
-
 		if (INS_IsMemoryWrite(ins))	*stats++ = special_index +INDEX_MEM_WRITE;
-
 	}
 	return stats;
 }
 
 /* ===================================================================== */
 
-LOCALFUN string IndexToString(UINT32 index) {
+LOCALFUN string IndexToString(UINT32 index) 
+{
 
 	const UINT32 SPECIAL_INDEX = GetSpecialIndex();
 	if ( index >= SPECIAL_INDEX ) {
@@ -412,24 +396,17 @@ LOCALFUN string IndexToString(UINT32 index) {
 
 /*========================================================================*/
 
-LOCALFUN thread_data_t* get_tls(THREADID tid) {
+LOCALFUN THREAD_DATA* get_tls(THREADID tid) 
+{
 	return &threadDataArray[tid];
 }
 
 /* ===================================================================== */
 
-VOID zero_stats(THREADID tid) {
-	thread_data_t* tdata = get_tls(tid);
-	tdata->cstats->clear();
-	UINT32 limit = tdata->size();
-	for (UINT32 i = 0; i < limit; i++)
-		tdata->block_counts[i] = 0;
-}
-/* ===================================================================== */
-
 VOID UpdateLocalStats(THREADID tid)
 {
-	thread_data_t* tdata = get_tls(tid);
+	THREAD_DATA
+* tdata = get_tls(tid);
 
 	//get all discovered BBLs by this thread
 	UINT32 discoveredBBLs = tdata->size();
@@ -454,24 +431,26 @@ VOID UpdateLocalStats(THREADID tid)
 		/* the last test below is for when new bbl's get jitted while we
 		 * are emitting stats */
 
-		if (b && b->_stats) //the string with the block statistics exists
+		if (b && b->_stats) //the string with the block DATACOUNTERS exists
 			//recall that this string is formed by all opcodes
 			//works like this: ADDMOVADDADDADD, for each time ADD is found in this
 			//string, the number of times the block was executed is appended
 			//to the array that maps all opcodes. this can be highly optmilized
 			//later by pre-computing it.
 			for (const stat_index_t* stats = b->_stats; *stats; stats++) {
-				tdata->cstats->unpredicated[*stats] += bcount;
+				tdata->datacounters->bucket[*stats] += bcount;
 			}
 	}
 	PIN_ReleaseLock(&locks.bbl_list_lock);
 }
 
 //TODO: Make this function compatible with accurate analysis
-VOID updateGlobalStats() {
-	thread_data_t* tdata;
+VOID updateGlobalStats() 
+{
+	THREAD_DATA* tdata;
+	
+	GlobalStatsUnpredicated->clear();
 
-	GlobalStatsDynamic->clear();
 	for (UINT32 tid = 0; tid < numThreads; tid++) {
 		tdata = get_tls(tid);
 
@@ -487,9 +466,9 @@ VOID updateGlobalStats() {
 			 * are emitting stats */
 			if (b && b->_stats)
 				for (const stat_index_t* stats = b->_stats; *stats; stats++) {
-					GlobalStatsDynamic->unpredicated[*stats] += bcount;
-					if (*stats <=  GlobalStatsDynamic->base_size)		
-						GlobalStatsDynamic->unpredicated[GlobalStatsDynamic->base_size+INDEX_TOTAL]+= bcount;
+					GlobalStatsUnpredicated->bucket[*stats] += bcount;
+					if (*stats <=  GlobalStatsUnpredicated->base_size)		
+						GlobalStatsUnpredicated->bucket[GlobalStatsUnpredicated->index_total]+= bcount;
 				}
 		}
 		PIN_ReleaseLock(&locks.bbl_list_lock);
@@ -505,7 +484,7 @@ VOID updateGlobalStats() {
 * this is important for the size of read/write memory fields
 */
 //
-VOID PrintCSVHeader(ofstream& out, CSTATS *stats)
+VOID PrintCSVHeader(ofstream& out, DATACOUNTERS *stats)
 {
 
 	PIN_GetLock(&locks.lock, 0); // for output
@@ -518,15 +497,14 @@ VOID PrintCSVHeader(ofstream& out, CSTATS *stats)
 
 }
 
-VOID PrintStatsToCSV(ofstream& out, UINT64 timestamp, CSTATS *stats,
-		BOOL predicated_true) {
+VOID PrintStatsToCSV(ofstream& out, UINT64 timestamp, DATACOUNTERS *stats,
+		BOOL predicated_true) 
+{
 
-	COUNTER *statss;
-	statss = predicated_true ? stats->predicated_true : stats->unpredicated;
 	PIN_GetLock(&locks.lock, 0); // for output
 	out << timestamp <<";";
 	for(UINT indx = 0; indx < stats->total_size; indx++){
-		out << statss[indx]  << ";";
+		out << stats->bucket[indx]  << ";";
 	}
 	out << endl;
 	PIN_ReleaseLock(&locks.lock);
@@ -534,12 +512,13 @@ VOID PrintStatsToCSV(ofstream& out, UINT64 timestamp, CSTATS *stats,
 
 
 /* ===================================================================== */
-VOID printTraceThread(VOID * arg) {
+VOID printTraceThread(VOID * arg) 
+{
 
-	while (traceEnabled) {
+	while (printThreadEnabled) {
 		PIN_Sleep(timeInterval);
 		updateGlobalStats();
-		PrintStatsToCSV(*out, get_timestamp(), GlobalStatsDynamic,
+		PrintStatsToCSV(*out, get_timestamp(), GlobalStatsUnpredicated,
 				KnobProfilePredicated);
 
 	}
@@ -549,24 +528,28 @@ VOID printTraceThread(VOID * arg) {
 /*=============================================================================*/
 /* Analysis tools */
 /*=============================================================================*/
-VOID validate_bbl_count(THREADID tid, ADDRINT block_count_for_trace) {
-	thread_data_t* tdata = get_tls(tid);
+VOID validate_bbl_count(THREADID tid, ADDRINT block_count_for_trace) 
+{
+	THREAD_DATA* tdata = get_tls(tid);
 	tdata->resize(block_count_for_trace + 1);
 }
 
-VOID PIN_FAST_ANALYSIS_CALL docount_bbl(ADDRINT block_id, THREADID tid) {
+VOID PIN_FAST_ANALYSIS_CALL docount_bbl(ADDRINT block_id, THREADID tid) 
+{
 	threadDataArray[tid].block_counts[block_id] += 1;
 }
 
-VOID docount_predicated_true(UINT32 index, THREADID tid) {
-	thread_data_t* tdata = get_tls(tid);
-	tdata->cstats->predicated_true[index] += 1;
+VOID docount_predicated_true(UINT32 index, THREADID tid) 
+{
+	THREAD_DATA* tdata = get_tls(tid);
+	tdata->datacounters->bucket[index] += 1;
 }
 /*=============================================================================*/
 /* Thread management specific functions */
 /*=============================================================================*/
 
-VOID ThreadStart(THREADID tid, CONTEXT *ctxt, INT32 flags, VOID *v) {
+VOID ThreadStart(THREADID tid, CONTEXT *ctxt, INT32 flags, VOID *v) 
+{
 	// This function is locked no need for a Pin Lock here
 	numThreads++;
 	if (numThreads > maxThreads) {
@@ -585,13 +568,15 @@ VOID ThreadStart(THREADID tid, CONTEXT *ctxt, INT32 flags, VOID *v) {
 }
 
 // This function is called when the thread exits
-VOID ThreadFini(THREADID tid, const CONTEXT *ctxt, INT32 code, VOID *v) {
+VOID ThreadFini(THREADID tid, const CONTEXT *ctxt, INT32 code, VOID *v) 
+{
 	*out << "#Thread[" << decstr(tid) << "] = finished" << endl;
 
 }
 /* ===================================================================== */
 
-VOID Trace(TRACE trace, VOID *v) {
+VOID Trace(TRACE trace, VOID *v) 
+{
 	static UINT32 basic_blocks = 0;
 
 	if (KnobNoSharedLibs.Value()
@@ -653,18 +638,17 @@ VOID Trace(TRACE trace, VOID *v) {
 		*curr++ = 0;
 		ASSERTX(curr == stats_end);
 
+		// DEBUG - print bbl details
 		// PIN_GetLock(&locks.lock, 0); // for output		
 		// *out << "BBL:"<<block_start_pc << ";";
 		// for(UINT32 a=0;a<n+1;a++){
 		// 	*out<<curr[a] <<";";
 		// }
 		// *out << endl;
-	
 		// *out << "BBL:"<<block_start_pc << ";";
 		// for(UINT32 a=0;a<n+1;a++){
 		// 	*out<<IndexToString(curr[a]) <<";";
 		// }
-
 		// *out << endl;
 		// PIN_ReleaseLock(&locks.lock);
 		
@@ -687,12 +671,12 @@ VOID Trace(TRACE trace, VOID *v) {
 /* ===================================================================== */
 
 VOID Fini(int, VOID * v) // only runs once for the application
-		{
-	traceEnabled = false;
+{
+	printThreadEnabled = false;
 	PIN_WaitForThreadTermination(printTraceThreadId, PIN_INFINITE_TIMEOUT,
 			NULL);
 	updateGlobalStats();
-	PrintStatsToCSV(*out, get_timestamp(), GlobalStatsDynamic,
+	PrintStatsToCSV(*out, get_timestamp(), GlobalStatsUnpredicated,
 			KnobProfilePredicated);
 	out->close();
 }
@@ -701,7 +685,8 @@ VOID Fini(int, VOID * v) // only runs once for the application
 /* Static analysis */
 /* ===================================================================== */
 
-VOID Image(IMG img, VOID * v) {
+VOID Image(IMG img, VOID * v) 
+{
 	for (SEC sec = IMG_SecHead(img); SEC_Valid(sec); sec = SEC_Next(sec)) {
 		for (RTN rtn = SEC_RtnHead(sec); RTN_Valid(rtn); rtn = RTN_Next(rtn)) {
 			// Prepare for processing of RTN, an  RTN is not broken up into BBLs,
@@ -716,11 +701,13 @@ VOID Image(IMG img, VOID * v) {
 
 				if (INS_IsPredicated(ins)) {
 					for (stat_index_t *start = array; start < end; start++) {
-						GlobalStatsStatic->predicated_true[*start]++;
+						GlobalStatsPredicated->bucket
+				[*start]++;
 					}
 				} else {
 					for (stat_index_t *start = array; start < end; start++) {
-						GlobalStatsStatic->unpredicated[*start]++;
+						GlobalStatsUnpredicated->bucket
+				[*start]++;
 					}
 				}
 			}
@@ -738,7 +725,8 @@ VOID Image(IMG img, VOID * v) {
 
 /* ===================================================================== */
 
-int main(int argc, CHAR **argv) {
+int main(int argc, CHAR **argv) 
+{
 	PIN_InitSymbols();
 	if (PIN_Init(argc, argv))
 		return Usage();
@@ -767,13 +755,13 @@ int main(int argc, CHAR **argv) {
 		measurement = measure_extension;
 
 	maxThreads = KnobThreads.Value();
-	threadDataArray = new thread_data_t[maxThreads];
+	threadDataArray = new THREAD_DATA[maxThreads];
 	for(UINT32 i=0; i < maxThreads;i++){
-		threadDataArray[i].cstats = new CSTATS(measurement);
+		threadDataArray[i].datacounters = new DATACOUNTERS(measurement);
 
 	}
-	GlobalStatsStatic = new CSTATS(measurement);
-	GlobalStatsDynamic = new CSTATS(measurement);
+	GlobalStatsPredicated = new DATACOUNTERS(measurement);
+	GlobalStatsUnpredicated = new DATACOUNTERS(measurement);
 
 	PIN_InitLock(&locks.lock);
 	PIN_InitLock(&locks.bbl_list_lock);
@@ -790,7 +778,7 @@ int main(int argc, CHAR **argv) {
 	if (!KnobProfileDynamicOnly.Value())
 		IMG_AddInstrumentFunction(Image, 0);
 
-	PrintCSVHeader(*out,GlobalStatsDynamic);
+	PrintCSVHeader(*out,GlobalStatsUnpredicated);
 	printTraceThreadId = PIN_SpawnInternalThread(printTraceThread, NULL, 0,
 			NULL);
 	ASSERT(printTraceThreadId != INVALID_THREADID,

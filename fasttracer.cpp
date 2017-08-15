@@ -57,35 +57,32 @@ extern "C" {
 /* ===================================================================== */
 KNOB_COMMENT tracer_knob_family("pintool:tracer", "Tracer knobs");
 
-KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE, "pintool:tracer", "o",
-		"fasttracer.out", "specify profile file name");
-KNOB<BOOL> KnobPid(KNOB_MODE_WRITEONCE, "pintool:tracer", "pid", "1",
-		"append pid to output file name");
-KNOB<BOOL> KnobProfilePredicated(KNOB_MODE_WRITEONCE, "pintool:tracer", "accurate",
-		"0", "enable accurate profiling for predicated instructions");
-KNOB<BOOL> KnobProfileStaticOnly(KNOB_MODE_WRITEONCE, "pintool:tracer", "static",
-		"0", "terminate after collection of static profile for main image");
-KNOB<BOOL> KnobProfileMemory(KNOB_MODE_WRITEONCE, "pintool:tracer", "memory",
-		"1", "terminate after collection of static profile for main image");
+KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE, "pintool:tracer", 
+		"o", "fasttracer.out", "specify profile file name");
+KNOB<BOOL> KnobPid(KNOB_MODE_WRITEONCE, "pintool:tracer", 
+		"pid", "1", "append pid to output file name");
+KNOB<BOOL> KnobProfilePredicated(KNOB_MODE_WRITEONCE, "pintool:tracer", 
+		"accurate", "0", "enable accurate profiling for predicated instructions");
+KNOB<BOOL> KnobProfileStaticOnly(KNOB_MODE_WRITEONCE, "pintool:tracer", 
+		"static", "0", "terminate after collection of static profile for main image");
+KNOB<BOOL> KnobProfileMemory(KNOB_MODE_WRITEONCE, "pintool:tracer", 
+		"memory", "1", "terminate after collection of static profile for main image");
 KNOB<BOOL> KnobNoSharedLibs(KNOB_MODE_WRITEONCE, "pintool:tracer",
 		"no_shared_libs", "0", "do not instrument shared libraries");
-
-
-KNOB<BOOL> KnobOpcodesTracer(KNOB_MODE_WRITEONCE, "pintool:tracer", "opcode",
-		"1", "Compute ISA category tracer");
-
+KNOB<BOOL> KnobOpcodesTracer(KNOB_MODE_WRITEONCE, "pintool:tracer", 
+		"opcode", "0", "Compute ISA category tracer");
 KNOB<BOOL> KnobInstructionLengthTracer(KNOB_MODE_WRITEONCE, "pintool:tracer",
 		"ilen", "0", "Compute instruction length tracer");
-KNOB<BOOL> KnobCategoryTracer(KNOB_MODE_WRITEONCE, "pintool:tracer", "category",
-		"0", "Compute ISA category tracer");
-KNOB<BOOL> KnobExtensionTracer(KNOB_MODE_WRITEONCE, "pintool:tracer", "extension",
-		"0", "Compute ISA category tracer");
-KNOB<BOOL> KnobIformTracer(KNOB_MODE_WRITEONCE, "pintool:tracer", "iform", "0",
-		"Compute ISA iform tracer");
-KNOB<UINT32> KnobTimer(KNOB_MODE_WRITEONCE, "pintool:tracer", "c", "999",
-		"specify the time interval"); //sleep wakes up after 999ms, ~1s
-KNOB<UINT32> KnobThreads(KNOB_MODE_WRITEONCE, "pintool:tracer", "t", "40",
-		"specify the time interval");
+KNOB<BOOL> KnobCategoryTracer(KNOB_MODE_WRITEONCE, "pintool:tracer", 
+		"category","0", "Compute ISA category tracer");
+KNOB<BOOL> KnobExtensionTracer(KNOB_MODE_WRITEONCE, "pintool:tracer", 
+		"extension","0", "Compute ISA category tracer");
+KNOB<BOOL> KnobIformTracer(KNOB_MODE_WRITEONCE, "pintool:tracer", 
+		"iform", "0", "Compute ISA iform tracer");
+KNOB<UINT32> KnobTimer(KNOB_MODE_WRITEONCE, "pintool:tracer", 
+		"timer", "999", "specify the time interval"); //sleep wakes up after 999ms, ~1s
+KNOB<UINT32> KnobThreads(KNOB_MODE_WRITEONCE, "pintool:tracer", 
+		"threads", "40", "specify the time interval");
 
 /* ===================================================================== */
 
@@ -777,16 +774,11 @@ int main(int argc, CHAR **argv)
 		exit(1);
 	}
 
-	if (KnobOpcodesTracer.Value())
-		measurement = measure_opcode;
-	else if (KnobInstructionLengthTracer.Value())
-		measurement = measure_ilen;
-	else if (KnobCategoryTracer.Value())
-		measurement = measure_category;
-	else if (KnobIformTracer.Value())
-		measurement = measure_iform;
-	else if (KnobExtensionTracer.Value())
-		measurement = measure_extension;
+	if (KnobOpcodesTracer.Value())					measurement = measure_opcode;
+	else if (KnobInstructionLengthTracer.Value())	measurement = measure_ilen;
+	else if (KnobCategoryTracer.Value())			measurement = measure_category;
+	else if (KnobIformTracer.Value())				measurement = measure_iform;
+	else if (KnobExtensionTracer.Value())			measurement = measure_extension;
 
 	maxThreads = KnobThreads.Value();
 	//pre-allocate thread data

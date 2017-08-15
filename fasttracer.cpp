@@ -231,11 +231,14 @@ class THREAD_DATA
 {
 	public:
 		DATACOUNTERS* datacounters;
+		DATACOUNTERS* accuratedatacounters;
+
 		vector<COUNTER> block_counts;
 		
 		THREAD_DATA() 
 		{
 			datacounters=NULL;
+			accuratedatacounters=NULL;
 		}
 		
 		UINT32 size() 
@@ -260,7 +263,7 @@ locks_t locks;
 measurement_t measurement = measure_opcode;
 static TLS_KEY tls_key;
 static std::ofstream* out;
-DATACOUNTERS *GlobalStatsPredicated;  // only static analysis use both Globals
+DATACOUNTERS *GlobalStatsPredicated;  // for accurate and  static analysis
 DATACOUNTERS *GlobalStatsUnpredicated;
 LOCALVAR vector<BBLSTATS*> statsList;
 THREADID printTraceThreadId;
@@ -269,6 +272,7 @@ UINT32 numThreads = 0;
 UINT32 timeInterval;
 THREAD_DATA* threadDataArray;
 BOOL printThreadEnabled = true;
+BOOL accurateProfiling = false;
 
 /* ===================================================================== */
 /* index functions*/
@@ -445,6 +449,9 @@ VOID updateGlobalStats()
 	THREAD_DATA* tdata;
 	
 	GlobalStatsUnpredicated->clear();
+	if(accurateProfiling){
+		GlobalStatsPredicated->clear();
+	}
 
 	for (UINT32 tid = 0; tid < numThreads; tid++) {
 		tdata = get_tls(tid);
@@ -465,6 +472,13 @@ VOID updateGlobalStats()
 					if (*stats <=  GlobalStatsUnpredicated->base_size)		
 						GlobalStatsUnpredicated->bucket[GlobalStatsUnpredicated->index_total]+= bcount;
 				}
+		}
+
+		if(accurateProfiling){
+			for (UINT32 i = 0; i < GlobalStatsPredicated->base_size; i++) {
+				GlobalStatsPredicated->bucket[i] += tdata->accuratedatacounters->bucket[i];
+				GlobalStatsPredicated->bucket[GlobalStatsPredicated->index_total] += tdata->accuratedatacounters->bucket[i];
+			}
 		}
 		PIN_ReleaseLock(&locks.bbl_list_lock);
 
@@ -492,11 +506,11 @@ VOID PrintCSVHeader(ofstream& out, DATACOUNTERS *stats)
 
 }
 
-VOID PrintStatsToCSV(ofstream& out, UINT64 timestamp, DATACOUNTERS *stats) 
+VOID PrintStatsToCSV(ofstream& out, UINT64 timestamp, DATACOUNTERS *stats, string tag)
 {
 
 	PIN_GetLock(&locks.lock, 0); // for output
-	out << timestamp <<";";
+	out << tag << timestamp <<";";
 	for(UINT indx = 0; indx < stats->total_size; indx++){
 		out << stats->bucket[indx]  << ";";
 	}
@@ -504,7 +518,23 @@ VOID PrintStatsToCSV(ofstream& out, UINT64 timestamp, DATACOUNTERS *stats)
 	PIN_ReleaseLock(&locks.lock);
 }
 
+VOID PrintBBL(ADDRINT block_id, UINT32* bblstring, UINT32 size )
+{
+	// DEBUG - print bbl details
+	PIN_GetLock(&locks.lock, 0); // for output		
+	*out << "BBL:"<<block_id << ";";
+	for(UINT32 a = 0; a < size; a++){
+		*out << bblstring[a] << ";";
+	}
+	*out << endl;
 
+	*out << "BBL:"<<block_id << ";";
+	for(UINT32 a = 0; a < size ; a++){
+		*out<<IndexToString(bblstring[a]) <<";";
+	}
+	*out << endl;
+	PIN_ReleaseLock(&locks.lock);
+}
 /* ===================================================================== */
 VOID printTraceThread(VOID * arg) 
 {
@@ -512,7 +542,11 @@ VOID printTraceThread(VOID * arg)
 	while (printThreadEnabled) {
 		PIN_Sleep(timeInterval);
 		updateGlobalStats();
-		PrintStatsToCSV(*out, get_timestamp(), GlobalStatsUnpredicated);
+		const UINT64 snapshot = get_timestamp();
+		PrintStatsToCSV(*out, snapshot, GlobalStatsUnpredicated,"");
+		if(accurateProfiling)
+			PrintStatsToCSV(*out, snapshot, GlobalStatsPredicated,"$");
+
 
 	}
 
@@ -532,10 +566,10 @@ VOID PIN_FAST_ANALYSIS_CALL docount_bbl(ADDRINT block_id, THREADID tid)
 	threadDataArray[tid].block_counts[block_id] += 1;
 }
 
-VOID docount_predicated_true(UINT32 index, THREADID tid) 
+VOID docount_accurate_instructions(UINT32 index, THREADID tid) 
 {
 	THREAD_DATA* tdata = get_tls(tid);
-	tdata->datacounters->bucket[index] += 1;
+	tdata->accuratedatacounters->bucket[index] += 1;
 }
 /*=============================================================================*/
 /* Thread management specific functions */
@@ -577,7 +611,6 @@ VOID Trace(TRACE trace, VOID *v)
 					== IMG_TYPE_SHAREDLIB)
 		return;
 
-	const BOOL accurate_handling_of_predicates = KnobProfilePredicated.Value();
 	const BOOL memory_access_profile = KnobProfileMemory.Value();
 
 	ADDRINT pc = TRACE_Address(trace);
@@ -613,11 +646,9 @@ VOID Trace(TRACE trace, VOID *v)
 		UINT32 ninsts = 0;
 		for (INS ins = head; INS_Valid(ins); ins = INS_Next(ins)) {
 			UINT32 instruction_size = INS_Size(ins);
-			// Count the number of times a predicated instruction is actually executed
-			// this is expensive and hence disabled by default
-			if (INS_IsPredicated(ins) && accurate_handling_of_predicates) {
+			if (accurateProfiling && INS_IsPredicated(ins)) {
 				INS_InsertPredicatedCall(ins, IPOINT_BEFORE,
-						AFUNPTR(docount_predicated_true), IARG_UINT32,
+						AFUNPTR(docount_accurate_instructions), IARG_UINT32,
 						INS_GetIndex(ins), IARG_THREAD_ID,
 						IARG_END);
 			}
@@ -631,19 +662,7 @@ VOID Trace(TRACE trace, VOID *v)
 		*curr++ = 0;
 		ASSERTX(curr == stats_end);
 
-		// DEBUG - print bbl details
-		// PIN_GetLock(&locks.lock, 0); // for output		
-		// *out << "BBL:"<<block_start_pc << ";";
-		// for(UINT32 a=0;a<n+1;a++){
-		// 	*out<<curr[a] <<";";
-		// }
-		// *out << endl;
-		// *out << "BBL:"<<block_start_pc << ";";
-		// for(UINT32 a=0;a<n+1;a++){
-		// 	*out<<IndexToString(curr[a]) <<";";
-		// }
-		// *out << endl;
-		// PIN_ReleaseLock(&locks.lock);
+		// Print_BBL(block_start_pc,curr,n+1); 		// DEBUG - print bbl details
 		
 		// Insert instrumentation to count the number of times the bbl is executed
 		BBLSTATS * bblstats = new BBLSTATS(stats, block_start_pc, ninsts,
@@ -665,19 +684,21 @@ VOID Trace(TRACE trace, VOID *v)
 
 VOID Fini(int, VOID * v) // only runs once for the application
 {
-	if(!KnobProfileStaticOnly.Value())
+	if(KnobProfileStaticOnly.Value())
+	{
+		PrintStatsToCSV(*out, 0L, GlobalStatsUnpredicated,"");
+		PrintStatsToCSV(*out, 0L, GlobalStatsPredicated,"$");
+	}
+	else
 	{
 		printThreadEnabled = false;
 		PIN_WaitForThreadTermination(printTraceThreadId, PIN_INFINITE_TIMEOUT,
 				NULL);
 		updateGlobalStats();
-		PrintStatsToCSV(*out, get_timestamp(), GlobalStatsUnpredicated);
-	}
-	else
-	{
+		PrintStatsToCSV(*out, get_timestamp(), GlobalStatsUnpredicated,"");
+		if(accurateProfiling)
+			PrintStatsToCSV(*out, get_timestamp(), GlobalStatsPredicated,"$");
 
-		PrintStatsToCSV(*out, 0L, GlobalStatsUnpredicated);
-		PrintStatsToCSV(*out, 0L, GlobalStatsPredicated);
 	}
 	out->close();
 }
@@ -738,6 +759,7 @@ int main(int argc, CHAR **argv)
 	//process command line parameters/knobs
 	timeInterval = KnobTimer.Value();
 	string filename = KnobOutputFile.Value();
+	accurateProfiling = KnobProfilePredicated.Value();
 	if (KnobPid) {
 		filename += "." + decstr(getpid());
 	}
@@ -759,12 +781,21 @@ int main(int argc, CHAR **argv)
 		measurement = measure_extension;
 
 	maxThreads = KnobThreads.Value();
+	//pre-allocate thread data
 	threadDataArray = new THREAD_DATA[maxThreads];
 	for(UINT32 i=0; i < maxThreads;i++){
 		threadDataArray[i].datacounters = new DATACOUNTERS(measurement);
-
 	}
 	GlobalStatsUnpredicated = new DATACOUNTERS(measurement);
+
+	//we need one more bucket for accurate instruction counter
+	if(accurateProfiling){
+		for(UINT32 i=0; i < maxThreads;i++){
+				threadDataArray[i].accuratedatacounters = new DATACOUNTERS(measurement);
+		}
+		GlobalStatsPredicated = new DATACOUNTERS(measurement);
+	}
+
 
 	PIN_InitLock(&locks.lock);
 	PIN_InitLock(&locks.bbl_list_lock);

@@ -69,6 +69,11 @@ KNOB<BOOL> KnobProfileMemory(KNOB_MODE_WRITEONCE, "pintool:tracer", "memory",
 		"1", "terminate after collection of static profile for main image");
 KNOB<BOOL> KnobNoSharedLibs(KNOB_MODE_WRITEONCE, "pintool:tracer",
 		"no_shared_libs", "0", "do not instrument shared libraries");
+
+
+KNOB<BOOL> KnobOpcodesTracer(KNOB_MODE_WRITEONCE, "pintool:tracer", "opcode",
+		"1", "Compute ISA category tracer");
+
 KNOB<BOOL> KnobInstructionLengthTracer(KNOB_MODE_WRITEONCE, "pintool:tracer",
 		"ilen", "0", "Compute instruction length tracer");
 KNOB<BOOL> KnobCategoryTracer(KNOB_MODE_WRITEONCE, "pintool:tracer", "category",
@@ -771,13 +776,16 @@ int main(int argc, CHAR **argv)
 				<< "as a pintool option" << endl;
 		exit(1);
 	}
-	if (KnobInstructionLengthTracer.Value())
+
+	if (KnobOpcodesTracer.Value())
+		measurement = measure_opcode;
+	else if (KnobInstructionLengthTracer.Value())
 		measurement = measure_ilen;
-	if (KnobCategoryTracer.Value())
+	else if (KnobCategoryTracer.Value())
 		measurement = measure_category;
-	if (KnobIformTracer.Value())
+	else if (KnobIformTracer.Value())
 		measurement = measure_iform;
-	if (KnobExtensionTracer.Value())
+	else if (KnobExtensionTracer.Value())
 		measurement = measure_extension;
 
 	maxThreads = KnobThreads.Value();

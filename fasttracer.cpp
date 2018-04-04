@@ -83,6 +83,8 @@ KNOB<UINT32> KnobTimer(KNOB_MODE_WRITEONCE, "pintool:tracer",
 		"timer", "999", "specify the time interval"); //sleep wakes up after 999ms, ~1s
 KNOB<UINT32> KnobThreads(KNOB_MODE_WRITEONCE, "pintool:tracer", 
 		"threads", "40", "specify the time interval");
+KNOB<string> KnobRemoteMonitorFile(KNOB_MODE_WRITEONCE, "pintool:tracer", 
+		"csv", "undefined", "specify the sensor file with startup/end experiment times");
 
 /* ===================================================================== */
 
@@ -490,6 +492,21 @@ VOID updateGlobalStats()
 /* ===================================================================== */
 
 /*
+*
+*
+*/
+VOID PrintRemoteMonitorFile(ofstream& out, string csvname)
+{
+
+	PIN_GetLock(&locks.lock, 0); // for output
+	out << "# csv ";
+	out << csvname ;
+	out <<endl;
+	PIN_ReleaseLock(&locks.lock);
+
+}
+
+/*
 * To cope with the variable header size, we can print the header time to time
 * and at the end of the experiment.
 * this is important for the size of read/write memory fields
@@ -800,6 +817,7 @@ int main(int argc, CHAR **argv)
 	PIN_InitLock(&locks.lock);
 	PIN_InitLock(&locks.bbl_list_lock);
 
+	PrintRemoteMonitorFile(*out,KnobRemoteMonitorFile.Value());
 	PrintCSVHeader(*out,GlobalStatsUnpredicated);
 
 	// obtain  a key for TLS storage

@@ -1,5 +1,5 @@
-# opmixtracer
-tracer for instruction code
-teste
-teste 2
-teste 3
+Compile instructions within docker:
+docker build -t pintool .
+docker run --rm -v $(pwd):/code -it pintool /bin/bash
+cd /code
+make clean && make

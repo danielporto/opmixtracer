@@ -80,7 +80,7 @@ KNOB<BOOL> KnobExtensionTracer(KNOB_MODE_WRITEONCE, "pintool:tracer",
 KNOB<BOOL> KnobIformTracer(KNOB_MODE_WRITEONCE, "pintool:tracer", 
 		"iform", "0", "Compute ISA iform tracer");
 KNOB<UINT32> KnobTimer(KNOB_MODE_WRITEONCE, "pintool:tracer", 
-		"timer", "999", "specify the time interval"); //sleep wakes up after 999ms, ~1s
+		"timer", "995", "specify the time interval"); //sleep wakes up after 995ms, ~1s
 KNOB<UINT32> KnobThreads(KNOB_MODE_WRITEONCE, "pintool:tracer", 
 		"threads", "40", "specify the time interval");
 KNOB<string> KnobRemoteMonitorFile(KNOB_MODE_WRITEONCE, "pintool:tracer", 
@@ -408,8 +408,7 @@ LOCALFUN THREAD_DATA* get_tls(THREADID tid)
 
 VOID UpdateLocalStats(THREADID tid)
 {
-	THREAD_DATA
-* tdata = get_tls(tid);
+	THREAD_DATA * tdata = get_tls(tid);
 
 	//get all discovered BBLs by this thread
 	UINT32 discoveredBBLs = tdata->size();
@@ -418,7 +417,7 @@ VOID UpdateLocalStats(THREADID tid)
 	//therefore, require a lock in here.
 	PIN_GetLock(&locks.bbl_list_lock, tid + 2);
 
-	/*Next: count the blocks that are already known by all other threads.
+	/* Next: count the blocks that are already known by all other threads.
 	* Thread block number can increase before the general (stats) list (look at the Trace method),
 	* there, for every BBL, first the number of BBL is validated and increased if necessary
 	* then, the BBLs are counted.
@@ -438,7 +437,7 @@ VOID UpdateLocalStats(THREADID tid)
 			//recall that this string is formed by all opcodes
 			//works like this: ADDMOVADDADDADD, for each time ADD is found in this
 			//string, the number of times the block was executed is appended
-			//to the array that maps all opcodes. this can be highly optmilized
+			//to the array that maps all opcodes. this can be highly optimized
 			//later by pre-computing it.
 			for (const stat_index_t* stats = b->_stats; *stats; stats++) {
 				tdata->datacounters->bucket[*stats] += bcount;

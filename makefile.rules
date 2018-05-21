@@ -35,7 +35,7 @@ TOOL_ROOTS :=
 SA_TOOL_ROOTS :=
 
 # This defines all the applications that will be run during the tests.
-APP_ROOTS :=
+APP_ROOTS := thread_app
 
 # This defines any additional object files that need to be compiled.
 OBJECT_ROOTS :=
@@ -72,3 +72,5 @@ SANITY_SUBSET := $(TEST_TOOL_ROOTS) $(TEST_ROOTS)
 
 # This section contains the build rules for all binaries that have special build rules.
 # See makefile.default.rules for the default build rules.
+$(OBJDIR)thread_app$(EXE_SUFFIX): thread_$(OS_TYPE).c 
+		$(APP_CC) $(APP_CXXFLAGS) $(COMP_EXE)$@ $< $(APP_LDFLAGS) $(APP_LIBS)

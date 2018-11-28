@@ -82,7 +82,7 @@ KNOB<BOOL> KnobIformTracer(KNOB_MODE_WRITEONCE, "pintool:tracer",
 KNOB<UINT32> KnobTimer(KNOB_MODE_WRITEONCE, "pintool:tracer", 
 		"timer", "995", "specify the time interval"); //sleep wakes up after 995ms, ~1s
 KNOB<UINT32> KnobThreads(KNOB_MODE_WRITEONCE, "pintool:tracer", 
-		"threads", "40", "specify the time interval");
+		"threads", "40", "the number of threads that the application creates");
 KNOB<string> KnobRemoteMonitorFile(KNOB_MODE_WRITEONCE, "pintool:tracer", 
 		"csv", "undefined", "specify the sensor file with startup/end experiment times");
 
@@ -557,15 +557,23 @@ VOID PrintBBL(ADDRINT block_id, UINT32* bblstring, UINT32 size )
 VOID printTraceThread(VOID * arg) 
 {
 
+	UINT64 snapshot;
+	UINT64 next_probe_time;
+
 	while (printThreadEnabled) {
-		PIN_Sleep(timeInterval);
+		snapshot  = get_timestamp();
+
 		updateGlobalStats();
-		const UINT64 snapshot = get_timestamp();
 		PrintStatsToCSV(*out, snapshot, GlobalStatsUnpredicated,"");
 		if(accurateProfiling)
 			PrintStatsToCSV(*out, snapshot, GlobalStatsPredicated,"$");
 
+		// ensure the probe interval
+		next_probe_time  = timeInterval - (get_timestamp() - snapshot);
+		if (next_probe_time < 0 )
+			next_probe_time = 0.001; // probe now!
 
+		PIN_Sleep(next_probe_time);
 	}
 
 }
@@ -599,7 +607,7 @@ VOID ThreadStart(THREADID tid, CONTEXT *ctxt, INT32 flags, VOID *v)
 	numThreads++;
 	if (numThreads > maxThreads) {
 		*out
-				<< "Max thread number ["<<maxThreads<<"] has been reached, aborting!! increase the number of threads with '-t'"
+				<< "Max thread number ["<<maxThreads<<"] has been reached, aborting!! increase the number of threads with '-threads 40' (default=40)"
 				<< endl;
 		exit(0);
 	}

@@ -536,6 +536,13 @@ VOID PrintStatsToCSV(ofstream& out, UINT64 timestamp, DATACOUNTERS *stats, strin
 	PIN_ReleaseLock(&locks.lock);
 }
 
+VOID PrintMessage(ofstream& out, string msg)
+{
+	PIN_GetLock(&locks.lock, 0); // for output
+	out << "#> " << msg << ";" << endl;
+	PIN_ReleaseLock(&locks.lock);
+}
+
 VOID PrintBBL(ADDRINT block_id, UINT32* bblstring, UINT32 size )
 {
 	// DEBUG - print bbl details
@@ -557,22 +564,27 @@ VOID PrintBBL(ADDRINT block_id, UINT32* bblstring, UINT32 size )
 VOID printTraceThread(VOID * arg) 
 {
 
-	UINT64 snapshot;
+	UINT64 snapshot_ini;
+	UINT64 snapshot_fin;
+	UINT64 duration;
 	UINT64 next_probe_time;
 
 	while (printThreadEnabled) {
-		snapshot  = get_timestamp();
+		ostringstream s;
 
+		snapshot_ini  = get_timestamp(); //in usec
 		updateGlobalStats();
-		PrintStatsToCSV(*out, snapshot, GlobalStatsUnpredicated,"");
+		snapshot_fin = get_timestamp(); // in usec
+
+		PrintStatsToCSV(*out, snapshot_fin, GlobalStatsUnpredicated,"");
 		if(accurateProfiling)
-			PrintStatsToCSV(*out, snapshot, GlobalStatsPredicated,"$");
+			PrintStatsToCSV(*out, snapshot_fin, GlobalStatsPredicated,"$");
 
-		// ensure the probe interval
-		next_probe_time  = timeInterval - (get_timestamp() - snapshot);
+		duration = (get_timestamp() - snapshot_ini)/1000; // in msec  ; 
+
+		next_probe_time  = timeInterval - duration;
 		if (next_probe_time < 0 )
-			next_probe_time = 0.001; // probe now!
-
+			next_probe_time = 1; // probe now!
 		PIN_Sleep(next_probe_time);
 	}
 
